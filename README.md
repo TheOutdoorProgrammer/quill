@@ -13,7 +13,7 @@ Quill works out the version from your tag list, refuses to release off the wrong
     publish: goreleaser
 ```
 
-It publishes through [GoReleaser](https://goreleaser.com), through [Fledge](https://github.com/TheOutdoorProgrammer/fledge) for iOS builds, through both at once, or through neither.
+It publishes through [GoReleaser](https://goreleaser.com), through [Fledge](https://github.com/TheOutdoorProgrammer/fledge) for iOS builds, through Docker to any registry, through any combination of the three, or through none of them.
 
 ## What it actually does
 
@@ -22,10 +22,12 @@ graph TD
   A[dropdown] --> B[plan]
   B --> C[dry run]
   C --> D[tag and push]
-  D --> E[publish]
-  E --> F[move v1 alias]
-  D -.on failure.-> G[untag]
-  E -.on failure.-> G
+  D --> E[goreleaser]
+  E --> F[fledge]
+  F --> G[docker]
+  G --> H[move v1 alias]
+  D -.on failure.-> I[untag]
+  G -.on failure.-> I
 ```
 
 Everything above `tag and push` is side-effect free.
@@ -104,14 +106,20 @@ jobs:
 ## Publishers
 
 `publish` is a set, not a choice.
-List `goreleaser` and `fledge` together and both run against one version and one tag, which is what a repository carrying a binary and an iOS app wants.
+List several and they all run against one version and one tag, which is what a repository carrying a binary and a container image wants.
 
 | `publish` | What happens |
 | --- | --- |
 | `none` | Tag, and a GitHub release with generated notes |
 | `goreleaser` | GoReleaser builds, publishes, and writes its own release |
 | `fledge` | Tag, a GitHub release, and the archive goes to a Fledge server |
-| `goreleaser, fledge` | Both, in that order, on the same tag |
+| `docker` | Tag, a GitHub release, and a multi-platform image pushed to a registry |
+| `goreleaser, docker` | Both, on the same tag |
+
+**The order is fixed: GoReleaser, then Fledge, then Docker.**
+Listing them in another order does not run them in another order, so the run summary reports the sequence that actually happened.
+GoReleaser goes first because it produces the release the others might reference, Docker last because an image is the artefact most likely to consume one.
+[`adr/0005`](adr/0005-publishers-run-in-a-fixed-order.md) has the reasoning, including why a caller-chosen order was built and then removed.
 
 A typo is refused rather than silently publishing nothing.
 
@@ -148,6 +156,54 @@ Give quill a GitHub App and it mints a token scoped to that one repository, good
 
 That exports `HOMEBREW_TAP_GITHUB_TOKEN`, which is the variable a `homebrew_casks` block already expects.
 Set `tap-repository` if your tap is not called `homebrew-tap`.
+
+### Docker
+
+Quill does the whole thing: Buildx, the registry login, the tags, and a multi-platform build and push.
+
+```yaml
+- uses: TheOutdoorProgrammer/quill@v1
+  with:
+    publish: docker
+```
+
+That defaults to `ghcr.io/<this repository>`, lowercased, built for `linux/amd64` and `linux/arm64`, authenticated with the job's own token, cached in the Actions cache.
+`VERSION` and `COMMIT` are passed as build arguments, so a Dockerfile can stamp them without the workflow knowing the version.
+
+Tags come out as `1.2.3`, `1.2`, `1`, and `latest`:
+
+| Cutting | Tags pushed |
+| --- | --- |
+| `v1.2.3` | `1.2.3`, `1.2`, `1`, `latest` |
+| `v1.3.0-rc.1` | `1.3.0-rc.1` |
+
+**A release candidate never takes `latest`**, and never takes the major or minor tags either.
+That matters more than it looks: an unguarded `latest` means `docker pull` with no tag hands people a candidate.
+
+The version is passed to the tagger explicitly rather than read off the ref, because quill has not created the tag yet when the image is built.
+For the same reason, do not reach for `github.ref_name` in a build argument: the workflow runs on your default branch, so it is not the version.
+
+Override anything you need to:
+
+```yaml
+- uses: TheOutdoorProgrammer/quill@v1
+  with:
+    publish: docker
+    docker-images: docker.io/myorg/myapp
+    docker-registry: docker.io
+    docker-username: ${{ secrets.DOCKERHUB_USERNAME }}
+    docker-password: ${{ secrets.DOCKERHUB_TOKEN }}
+    docker-platforms: linux/amd64
+    docker-file: build/Dockerfile
+    docker-build-args: |
+      GO_VERSION=1.26
+```
+
+Before tagging, quill builds the image without pushing, so a broken Dockerfile does not burn a version number.
+That is close to free rather than double the work, because the check populates the cache the pushing build then reads.
+Turn it off with `docker-dry-run: "false"`.
+
+Pushing to `ghcr.io` needs `packages: write` on the job, alongside `contents: write`.
 
 ### Fledge
 
@@ -227,7 +283,7 @@ A tag left behind burns that version number: the next attempt computes the one a
 | --- | --- | --- |
 | `bump` | `patch` | `patch`, `minor` or `major` |
 | `scope` | `Release` | `Release` or `Release Candidate` |
-| `publish` | `none` | Any of `goreleaser` and `fledge`, comma or newline separated, or `none` |
+| `publish` | `none` | Any of `goreleaser`, `fledge` and `docker`, comma or newline separated, or `none`. Order is fixed |
 | `dry-run` | `false` | Do everything side-effect free and stop before tagging |
 | `release-branch` | `refs/heads/main` | The only ref a release may come from. Empty allows any |
 | `major-alias` | `true` | Move the `vN` tag. Never moves for a candidate |
@@ -237,6 +293,18 @@ A tag left behind burns that version number: the next attempt computes the one a
 | `github-release` | `auto` | `auto` leaves it to GoReleaser when GoReleaser is publishing |
 | `goreleaser-version` | `~> v2` | |
 | `goreleaser-args` | `release --clean` | The dry run is always a snapshot |
+| `docker-images` | `ghcr.io/<repo>` | Lowercased, because a registry path cannot carry the owner's capitalisation |
+| `docker-registry` | `ghcr.io` | Logged in to, and used to build the default image name |
+| `docker-login` | `true` | Turn off if the job already logged in |
+| `docker-username` | `github.actor` | |
+| `docker-password` | `github.token` | Enough for `ghcr.io` |
+| `docker-context` | `.` | |
+| `docker-file` | | Empty means the default for the context |
+| `docker-platforms` | `linux/amd64,linux/arm64` | |
+| `docker-build-args` | | Extra args. `VERSION` and `COMMIT` are always passed first |
+| `docker-tags` | | `metadata-action` spec. Empty means semver plus a guarded `latest` |
+| `docker-cache` | `true` | Use the Actions build cache |
+| `docker-dry-run` | `true` | Build without pushing before tagging |
 | `fledge-server` | | Empty defers to `fledge.yaml` |
 | `fledge-token` | | Empty uses a workload identity token |
 | `fledge-audience` | | Empty defaults to the server URL |
@@ -257,6 +325,9 @@ A tag left behind burns that version number: the next attempt computes the one a
 | `range` | The commit range between the two |
 | `prerelease` | Whether this is a candidate |
 | `released` | Whether a tag was actually cut. `false` for a dry run |
+| `publish-order` | The publishers that ran, in the order they ran |
+| `image-tags` | The image tags that were pushed |
+| `image-digest` | Digest of the pushed image |
 | `page-url` | Fledge install page to open on a device |
 | `install-url` | Fledge `itms-services` manifest URL |
 
