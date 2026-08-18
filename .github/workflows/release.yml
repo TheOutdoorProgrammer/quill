@@ -1,0 +1,57 @@
+# Quill releases itself with itself, which is the only test that proves the
+# whole path works. `uses: ./` rather than a pinned tag, so a broken change
+# fails here before anyone else can pin it.
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: What to cut
+        type: choice
+        default: Release
+        options:
+          - Release
+          - Release Candidate
+      bump:
+        description: Which part of the version to bump
+        type: choice
+        default: patch
+        options:
+          - patch
+          - minor
+          - major
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # Quill computes the next version from the tag list, and a shallow
+          # clone has none. It refuses rather than restarting at v0.1.0.
+          fetch-depth: 0
+
+      - id: release
+        uses: ./
+        with:
+          bump: ${{ inputs.bump }}
+          scope: ${{ inputs.scope }}
+          # An action is consumed from its repository, not from an archive, so
+          # there is nothing to build and upload. The release is the tag.
+          publish: none
+          github-release: "true"
+
+      - name: Say what shipped
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: echo "released $VERSION"
