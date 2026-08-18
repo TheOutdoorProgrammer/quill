@@ -1,0 +1,11 @@
+# Compiled binary from a local `make build`. A Go binary embeds the build
+# machine's paths unless -trimpath is passed, so this leaks $HOME if committed.
+/quill
+/quill.exe
+
+# dist/ is deliberately NOT ignored. The committed cross-compiled binaries are
+# what the action runs, and CI diffs them against a rebuild (adr/0001).
+
+# Editor and OS noise.
+.DS_Store
+*.swp

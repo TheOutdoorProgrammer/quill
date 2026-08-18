@@ -1,0 +1,298 @@
+name: Quill
+description: Cut a release from a dropdown. Works out the version, tags it, and publishes it.
+author: TheOutdoorProgrammer
+
+branding:
+  icon: feather
+  color: purple
+
+inputs:
+  bump:
+    description: Which part of the version to bump. One of patch, minor or major.
+    required: false
+    default: patch
+  scope:
+    description: Either "Release" or "Release Candidate".
+    required: false
+    default: Release
+  publish:
+    description: >-
+      Which publishers to run. Any of goreleaser and fledge, separated by commas
+      or newlines, or none. A repo shipping a binary and an iOS build lists both
+      and gets one version and one tag for the pair.
+    required: false
+    default: none
+  dry-run:
+    description: >-
+      Do everything that has no side effect and stop before tagging. This is what
+      a pull request build wants: the full cross-build, no tag, nothing published.
+    required: false
+    default: "false"
+  release-branch:
+    description: >-
+      The only ref a release may be cut from. A tag on a topic branch points at
+      history that is not on the default branch, which cannot be unpicked later.
+      Set it empty to allow any ref.
+    required: false
+    default: refs/heads/main
+  major-alias:
+    description: >-
+      Move the vN tag to this release, so callers can pin a major the way
+      actions/checkout@v4 works. Never moves for a release candidate.
+    required: false
+    default: "true"
+  working-directory:
+    description: The checkout to release from.
+    required: false
+    default: "."
+  env:
+    description: >-
+      KEY=value lines exported before publishing. This is how a publisher's
+      credentials arrive, and values never reach the log or the process list.
+    required: false
+    default: ""
+  github-token:
+    description: Token used to create the GitHub release and push tags.
+    required: false
+    default: ${{ github.token }}
+  github-release:
+    description: >-
+      Whether to create a GitHub release. "auto" leaves it to GoReleaser when
+      GoReleaser is publishing, and does it here when nothing else would.
+    required: false
+    default: auto
+
+  goreleaser-version:
+    description: Which GoReleaser to run.
+    required: false
+    default: "~> v2"
+  goreleaser-args:
+    description: Arguments for the publishing run. The dry run is always a snapshot.
+    required: false
+    default: release --clean
+
+  fledge-server:
+    description: Base URL of the Fledge server. Leave empty to let fledge.yaml supply it.
+    required: false
+    default: ""
+  fledge-token:
+    description: >-
+      Fledge upload token. Leave empty to authenticate with a GitHub workload
+      identity token, which needs id-token: write on the job.
+    required: false
+    default: ""
+  fledge-audience:
+    description: Audience for the identity token. Defaults to the server URL.
+    required: false
+    default: ""
+  fledge-ipa:
+    description: >-
+      Path or glob for the exported archive. Checked before the tag is cut, so a
+      missing or ambiguous archive does not burn a version number.
+    required: false
+    default: ""
+  fledge-notes:
+    description: >-
+      A line shown on the install page. Left empty so fledge.yaml's notes, or
+      the commit subject, still apply.
+    required: false
+    default: ""
+  fledge-fail-on-development-signing:
+    description: Fail when the archive is development signed. Empty defers to fledge.yaml.
+    required: false
+    default: ""
+  fledge-secure:
+    description: >-
+      Keep the Fledge server URL out of the log and the run summary, for a
+      public repo whose server address is a secret.
+    required: false
+    default: "false"
+
+  tap-app-id:
+    description: >-
+      GitHub App id for a Homebrew tap. Set this and tap-private-key and quill
+      mints a scoped, hour-long token and exports HOMEBREW_TAP_GITHUB_TOKEN.
+    required: false
+    default: ""
+  tap-private-key:
+    description: Private key for the tap app.
+    required: false
+    default: ""
+  tap-repository:
+    description: The tap repository the minted token may reach.
+    required: false
+    default: homebrew-tap
+
+outputs:
+  version:
+    description: The version that was cut, for example v1.2.0.
+    value: ${{ steps.plan.outputs.next }}
+  previous:
+    description: The tag this release follows, empty for a first release.
+    value: ${{ steps.plan.outputs.previous }}
+  range:
+    description: The commit range between the previous tag and HEAD.
+    value: ${{ steps.plan.outputs.range }}
+  prerelease:
+    description: Whether the version cut is a release candidate.
+    value: ${{ steps.plan.outputs.prerelease }}
+  released:
+    description: Whether a tag was actually cut. False for a dry run.
+    value: ${{ steps.tag.outcome == 'success' }}
+  page-url:
+    description: Fledge install page to open on a device.
+    value: ${{ steps.fledge.outputs.page-url }}
+  install-url:
+    description: Fledge itms-services manifest URL.
+    value: ${{ steps.fledge.outputs.install-url }}
+
+# Inputs reach every script through env rather than ${{ }} interpolation. An
+# interpolated run body is assembled before bash sees it, so a value containing
+# shell syntax would execute rather than be read.
+runs:
+  using: composite
+  steps:
+    # Side-effect free by design: the branch guard, the version arithmetic, and
+    # the check that whatever we are about to publish actually exists.
+    - id: plan
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        QUILL: ${{ github.action_path }}/scripts/run.sh
+        BUMP: ${{ inputs.bump }}
+        SCOPE: ${{ inputs.scope }}
+        PUBLISH: ${{ inputs.publish }}
+        REF: ${{ github.ref }}
+        # Written this way round because '' is falsy in a GitHub expression, so
+        # `cond && '' || x` collapses to x for both outcomes.
+        REQUIRE_REF: ${{ inputs.dry-run != 'true' && inputs.release-branch || '' }}
+        FLEDGE_ARTIFACT: ${{ inputs.fledge-ipa }}
+      run: |
+        set -euo pipefail
+        "$QUILL" plan -dir . \
+          -bump "$BUMP" \
+          -scope "$SCOPE" \
+          -publish "$PUBLISH" \
+          -ref "$REF" \
+          -require-ref "$REQUIRE_REF" \
+          -fledge-artifact "$FLEDGE_ARTIFACT"
+
+    - id: tap_token
+      if: inputs.tap-app-id != '' && inputs.tap-private-key != ''
+      uses: actions/create-github-app-token@v3
+      with:
+        app-id: ${{ inputs.tap-app-id }}
+        private-key: ${{ inputs.tap-private-key }}
+        owner: ${{ github.repository_owner }}
+        repositories: ${{ inputs.tap-repository }}
+
+    - name: Export publisher credentials
+      shell: bash
+      env:
+        QUILL: ${{ github.action_path }}/scripts/run.sh
+        QUILL_EXPORT: |
+          ${{ inputs.env }}
+          ${{ steps.tap_token.outputs.token && format('HOMEBREW_TAP_GITHUB_TOKEN={0}', steps.tap_token.outputs.token) || '' }}
+      run: |
+        set -euo pipefail
+        "$QUILL" export
+
+    # A tag is only worth cutting once we know the thing can be built, so the
+    # full cross-build runs first with publishing switched off.
+    - name: Dry run
+      if: steps.plan.outputs.publish-goreleaser == 'true'
+      uses: goreleaser/goreleaser-action@v7
+      with:
+        version: ${{ inputs.goreleaser-version }}
+        args: release --snapshot --clean --skip=publish
+        workdir: ${{ inputs.working-directory }}
+
+    - id: tag
+      if: inputs.dry-run != 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        QUILL: ${{ github.action_path }}/scripts/run.sh
+        VERSION: ${{ steps.plan.outputs.next }}
+      run: |
+        set -euo pipefail
+        "$QUILL" tag -dir . -version "$VERSION"
+
+    - name: Publish with GoReleaser
+      if: inputs.dry-run != 'true' && steps.plan.outputs.publish-goreleaser == 'true'
+      uses: goreleaser/goreleaser-action@v7
+      with:
+        version: ${{ inputs.goreleaser-version }}
+        args: ${{ inputs.goreleaser-args }}
+        workdir: ${{ inputs.working-directory }}
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        # Pinned because `git describe` picks the wrong tag when a release and
+        # its candidate sit on the same commit.
+        GORELEASER_CURRENT_TAG: ${{ steps.plan.outputs.next }}
+
+    # Skipped when GoReleaser is publishing, because it makes the release itself
+    # and the second attempt at the same tag fails.
+    - name: Create the GitHub release
+      if: >-
+        inputs.dry-run != 'true' &&
+        (inputs.github-release == 'true' ||
+         (inputs.github-release == 'auto' && steps.plan.outputs.publish-goreleaser != 'true'))
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        VERSION: ${{ steps.plan.outputs.next }}
+        PREVIOUS: ${{ steps.plan.outputs.previous }}
+        PRERELEASE: ${{ steps.plan.outputs.prerelease }}
+      run: |
+        set -euo pipefail
+        args=(--generate-notes --title "$VERSION")
+        if [ -n "$PREVIOUS" ]; then
+          args+=(--notes-start-tag "$PREVIOUS")
+        fi
+        if [ "$PRERELEASE" = "true" ]; then
+          args+=(--prerelease)
+        fi
+        gh release create "$VERSION" "${args[@]}"
+
+    # Every input defaults to empty on purpose. Fledge reads its own fledge.yaml
+    # for anything not passed, so config has one home rather than two.
+    - id: fledge
+      if: inputs.dry-run != 'true' && steps.plan.outputs.publish-fledge == 'true'
+      uses: TheOutdoorProgrammer/fledge/actions/publish@v1
+      with:
+        server: ${{ inputs.fledge-server }}
+        token: ${{ inputs.fledge-token }}
+        audience: ${{ inputs.fledge-audience }}
+        ipa: ${{ inputs.fledge-ipa }}
+        notes: ${{ inputs.fledge-notes }}
+        fail-on-development-signing: ${{ inputs.fledge-fail-on-development-signing }}
+        secure: ${{ inputs.fledge-secure }}
+
+    # Last, and only once everything published, or the alias points people at a
+    # release that failed halfway through.
+    - name: Move the major alias
+      if: inputs.dry-run != 'true' && inputs.major-alias == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        QUILL: ${{ github.action_path }}/scripts/run.sh
+        VERSION: ${{ steps.plan.outputs.next }}
+      run: |
+        set -euo pipefail
+        "$QUILL" alias -dir . -version "$VERSION"
+
+    # A tag left behind by a failed run burns that version number: the next
+    # attempt computes the one after it, and the failed tag stays forever as a
+    # release that never happened.
+    - name: Take the tag back
+      if: failure() && steps.tag.outcome == 'success'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        QUILL: ${{ github.action_path }}/scripts/run.sh
+        VERSION: ${{ steps.plan.outputs.next }}
+      run: |
+        set -euo pipefail
+        "$QUILL" untag -dir . -version "$VERSION"
