@@ -111,3 +111,44 @@ jobs:
             exit 1
           fi
           echo "dry run planned $VERSION without tagging"
+
+  # The Go tests cover which publishers are selected and in what order. This
+  # covers the wiring underneath them: Buildx, the tag metadata, and that the
+  # version reaches the build as an argument.
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - id: quill
+        uses: ./
+        with:
+          dry-run: "true"
+          # A candidate, so the guard that withholds latest is the thing under
+          # test rather than an untested default.
+          scope: Release Candidate
+          publish: docker
+          docker-context: .github/testdata
+          docker-platforms: linux/amd64
+          # Nothing is pushed on a dry run, so there is nothing to log in for.
+          docker-login: "false"
+
+      - name: The image was tagged from the planned version
+        env:
+          TAGS: ${{ steps.quill.outputs.image-tags }}
+          VERSION: ${{ steps.quill.outputs.version }}
+        run: |
+          set -euo pipefail
+          echo "tags: $TAGS"
+          # github.ref_name would be the branch here, so a tag carrying the
+          # planned version proves it did not come from the ref.
+          if ! grep -qF "${VERSION#v}" <<<"$TAGS"; then
+            echo "::error::tags '$TAGS' do not carry planned version $VERSION"
+            exit 1
+          fi
+          if grep -q ':latest' <<<"$TAGS"; then
+            echo "::error::a dry run planned a candidate as latest: $TAGS"
+            exit 1
+          fi

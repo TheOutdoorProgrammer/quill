@@ -17,9 +17,9 @@ inputs:
     default: Release
   publish:
     description: >-
-      Which publishers to run. Any of goreleaser and fledge, separated by commas
-      or newlines, or none. A repo shipping a binary and an iOS build lists both
-      and gets one version and one tag for the pair.
+      Which publishers to run. Any of goreleaser, docker and fledge separated
+      by commas or newlines, or none. They always run GoReleaser, then Fledge,
+      then Docker, whatever order they are listed in.
     required: false
     default: none
   dry-run:
@@ -70,6 +70,63 @@ inputs:
     description: Arguments for the publishing run. The dry run is always a snapshot.
     required: false
     default: release --clean
+
+  docker-images:
+    description: >-
+      Image name. Defaults to the registry plus this repository, lowercased,
+      because a registry path cannot carry the owner's capitalisation.
+    required: false
+    default: ""
+  docker-registry:
+    description: Registry to log in to and to build the default image name from.
+    required: false
+    default: ghcr.io
+  docker-login:
+    description: Log in to the registry. Turn it off if the job already did.
+    required: false
+    default: "true"
+  docker-username:
+    description: Registry username.
+    required: false
+    default: ${{ github.actor }}
+  docker-password:
+    description: Registry password. The job token is enough for ghcr.io.
+    required: false
+    default: ${{ github.token }}
+  docker-context:
+    description: Build context.
+    required: false
+    default: "."
+  docker-file:
+    description: Path to the Dockerfile. Empty means the default for the context.
+    required: false
+    default: ""
+  docker-platforms:
+    description: Platforms to build for.
+    required: false
+    default: linux/amd64,linux/arm64
+  docker-build-args:
+    description: >-
+      Extra build arguments, one per line. VERSION and COMMIT are always passed,
+      and anything here comes after them so it can override them.
+    required: false
+    default: ""
+  docker-tags:
+    description: >-
+      docker/metadata-action tag spec. The default is semver plus latest, with
+      latest withheld from a release candidate.
+    required: false
+    default: ""
+  docker-cache:
+    description: Use the GitHub Actions build cache.
+    required: false
+    default: "true"
+  docker-dry-run:
+    description: >-
+      Build the image without pushing before tagging, so a broken Dockerfile
+      does not burn a version number. The cache makes the real build cheap.
+    required: false
+    default: "true"
 
   fledge-server:
     description: Base URL of the Fledge server. Leave empty to let fledge.yaml supply it.
@@ -139,6 +196,15 @@ outputs:
   released:
     description: Whether a tag was actually cut. False for a dry run.
     value: ${{ steps.tag.outcome == 'success' }}
+  publish-order:
+    description: The publishers that ran, in the order they ran.
+    value: ${{ steps.plan.outputs.publish-order }}
+  image-tags:
+    description: The image tags that were pushed.
+    value: ${{ steps.docker_meta.outputs.tags }}
+  image-digest:
+    description: Digest of the pushed image.
+    value: ${{ steps.docker.outputs.digest }}
   page-url:
     description: Fledge install page to open on a device.
     value: ${{ steps.fledge.outputs.page-url }}
@@ -149,6 +215,9 @@ outputs:
 # Inputs reach every script through env rather than ${{ }} interpolation. An
 # interpolated run body is assembled before bash sees it, so a value containing
 # shell syntax would execute rather than be read.
+#
+# Publishers run in the sequence declared here, which is plan.Order, and
+# TestPublishStepsFollowTheDeclaredOrder holds the two together.
 runs:
   using: composite
   steps:
@@ -167,6 +236,9 @@ runs:
         # `cond && '' || x` collapses to x for both outcomes.
         REQUIRE_REF: ${{ inputs.dry-run != 'true' && inputs.release-branch || '' }}
         FLEDGE_ARTIFACT: ${{ inputs.fledge-ipa }}
+        DOCKER_IMAGES: ${{ inputs.docker-images }}
+        DOCKER_REGISTRY: ${{ inputs.docker-registry }}
+        DOCKER_TAGS: ${{ inputs.docker-tags }}
       run: |
         set -euo pipefail
         "$QUILL" plan -dir . \
@@ -175,7 +247,10 @@ runs:
           -publish "$PUBLISH" \
           -ref "$REF" \
           -require-ref "$REQUIRE_REF" \
-          -fledge-artifact "$FLEDGE_ARTIFACT"
+          -fledge-artifact "$FLEDGE_ARTIFACT" \
+          -docker-images "$DOCKER_IMAGES" \
+          -docker-registry "$DOCKER_REGISTRY" \
+          -docker-tags "$DOCKER_TAGS"
 
     - id: tap_token
       if: inputs.tap-app-id != '' && inputs.tap-private-key != ''
@@ -197,15 +272,55 @@ runs:
         set -euo pipefail
         "$QUILL" export
 
+    # Setup runs early regardless of where the push happens, because the
+    # metadata it produces is read by the pre-tag build too.
+    - name: Set up Buildx
+      if: steps.plan.outputs.publish-docker == 'true'
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to the registry
+      if: steps.plan.outputs.publish-docker == 'true' && inputs.docker-login == 'true'
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ inputs.docker-registry }}
+        username: ${{ inputs.docker-username }}
+        password: ${{ inputs.docker-password }}
+
+    - id: docker_meta
+      if: steps.plan.outputs.publish-docker == 'true'
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ steps.plan.outputs.docker-images }}
+        tags: ${{ steps.plan.outputs.docker-tags }}
+
     # A tag is only worth cutting once we know the thing can be built, so the
-    # full cross-build runs first with publishing switched off.
-    - name: Dry run
+    # full build runs first with publishing switched off.
+    - name: Dry run, GoReleaser
       if: steps.plan.outputs.publish-goreleaser == 'true'
       uses: goreleaser/goreleaser-action@v7
       with:
         version: ${{ inputs.goreleaser-version }}
         args: release --snapshot --clean --skip=publish
         workdir: ${{ inputs.working-directory }}
+
+    # Not wasted work: this populates the cache the pushing build reads, so the
+    # pair costs about one build rather than two.
+    - name: Dry run, Docker
+      if: steps.plan.outputs.publish-docker == 'true' && inputs.docker-dry-run == 'true'
+      uses: docker/build-push-action@v6
+      with:
+        context: ${{ inputs.docker-context }}
+        file: ${{ inputs.docker-file }}
+        push: false
+        platforms: ${{ inputs.docker-platforms }}
+        tags: ${{ steps.docker_meta.outputs.tags }}
+        labels: ${{ steps.docker_meta.outputs.labels }}
+        build-args: |
+          VERSION=${{ steps.plan.outputs.next }}
+          COMMIT=${{ github.sha }}
+          ${{ inputs.docker-build-args }}
+        cache-from: ${{ inputs.docker-cache == 'true' && 'type=gha' || '' }}
+        cache-to: ${{ inputs.docker-cache == 'true' && 'type=gha,mode=max' || '' }}
 
     - id: tag
       if: inputs.dry-run != 'true'
@@ -218,7 +333,11 @@ runs:
         set -euo pipefail
         "$QUILL" tag -dir . -version "$VERSION"
 
+    # Publishers run in a fixed sequence, declared here in plan.Order and gated
+    # one flag each. Letting a caller reorder them needs a step per publisher
+    # per position, which was built and then removed (adr/0005).
     - name: Publish with GoReleaser
+      id: goreleaser
       if: inputs.dry-run != 'true' && steps.plan.outputs.publish-goreleaser == 'true'
       uses: goreleaser/goreleaser-action@v7
       with:
@@ -231,8 +350,44 @@ runs:
         # its candidate sit on the same commit.
         GORELEASER_CURRENT_TAG: ${{ steps.plan.outputs.next }}
 
+    # Every input defaults to empty on purpose. Fledge reads its own fledge.yaml
+    # for anything not passed, so config has one home rather than two.
+    - name: Publish to Fledge
+      id: fledge
+      if: inputs.dry-run != 'true' && steps.plan.outputs.publish-fledge == 'true'
+      uses: TheOutdoorProgrammer/fledge/actions/publish@v1
+      with:
+        server: ${{ inputs.fledge-server }}
+        token: ${{ inputs.fledge-token }}
+        audience: ${{ inputs.fledge-audience }}
+        ipa: ${{ inputs.fledge-ipa }}
+        notes: ${{ inputs.fledge-notes }}
+        fail-on-development-signing: ${{ inputs.fledge-fail-on-development-signing }}
+        secure: ${{ inputs.fledge-secure }}
+
+    # Last, because an image is the artefact most likely to want something an
+    # earlier publisher produced.
+    - name: Build and push the image
+      id: docker
+      if: inputs.dry-run != 'true' && steps.plan.outputs.publish-docker == 'true'
+      uses: docker/build-push-action@v6
+      with:
+        context: ${{ inputs.docker-context }}
+        file: ${{ inputs.docker-file }}
+        push: true
+        platforms: ${{ inputs.docker-platforms }}
+        tags: ${{ steps.docker_meta.outputs.tags }}
+        labels: ${{ steps.docker_meta.outputs.labels }}
+        build-args: |
+          VERSION=${{ steps.plan.outputs.next }}
+          COMMIT=${{ github.sha }}
+          ${{ inputs.docker-build-args }}
+        cache-from: ${{ inputs.docker-cache == 'true' && 'type=gha' || '' }}
+        cache-to: ${{ inputs.docker-cache == 'true' && 'type=gha,mode=max' || '' }}
+
     # Skipped when GoReleaser is publishing, because it makes the release itself
-    # and the second attempt at the same tag fails.
+    # and the second attempt at the same tag fails. Last, so a publisher that
+    # failed leaves no release pointing at a tag that is about to be deleted.
     - name: Create the GitHub release
       if: >-
         inputs.dry-run != 'true' &&
@@ -255,20 +410,6 @@ runs:
           args+=(--prerelease)
         fi
         gh release create "$VERSION" "${args[@]}"
-
-    # Every input defaults to empty on purpose. Fledge reads its own fledge.yaml
-    # for anything not passed, so config has one home rather than two.
-    - id: fledge
-      if: inputs.dry-run != 'true' && steps.plan.outputs.publish-fledge == 'true'
-      uses: TheOutdoorProgrammer/fledge/actions/publish@v1
-      with:
-        server: ${{ inputs.fledge-server }}
-        token: ${{ inputs.fledge-token }}
-        audience: ${{ inputs.fledge-audience }}
-        ipa: ${{ inputs.fledge-ipa }}
-        notes: ${{ inputs.fledge-notes }}
-        fail-on-development-signing: ${{ inputs.fledge-fail-on-development-signing }}
-        secure: ${{ inputs.fledge-secure }}
 
     # Last, and only once everything published, or the alias points people at a
     # release that failed halfway through.

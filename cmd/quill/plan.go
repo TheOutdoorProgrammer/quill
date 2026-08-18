@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -32,9 +33,13 @@ func runPlan(args []string) error {
 	scope := fs.String("scope", "Release", `"Release" or "Release Candidate"`)
 	ref := fs.String("ref", "", "the ref this run is on, normally github.ref")
 	requireRef := fs.String("require-ref", "", "fail unless -ref matches this")
-	publish := fs.String("publish", "none", "publishers to run: goreleaser, fledge, none")
+	publish := fs.String("publish", "none",
+		"publishers to run, in order: goreleaser, docker, fledge, or none")
 	fledgeArtifact := fs.String("fledge-artifact", "",
 		"glob for the archive fledge will publish, checked before tagging")
+	dockerImages := fs.String("docker-images", "", "image name, defaulting to the repository")
+	dockerRegistry := fs.String("docker-registry", "", "registry for the default image name")
+	dockerTags := fs.String("docker-tags", "", "metadata-action tag spec, defaulting to semver")
 
 	var artifacts artifactList
 	fs.Var(&artifacts, "require-artifact", "glob that must match exactly one file; repeatable")
@@ -58,7 +63,7 @@ func runPlan(args []string) error {
 
 	// An empty glob is not an omission to complain about: fledge can read the
 	// path from its own fledge.yaml, in which case quill never sees one.
-	if publishers.Fledge && *fledgeArtifact != "" {
+	if publishers.Has(plan.Fledge) && *fledgeArtifact != "" {
 		artifacts = append(artifacts, *fledgeArtifact)
 	}
 
@@ -99,11 +104,23 @@ func runPlan(args []string) error {
 		return fmt.Errorf("%s already exists, so this release has run before", next)
 	}
 
-	return publishPlan(next, latest, haveTag, bump, publishers)
+	docker := dockerPlan{
+		images: plan.DockerImages(*dockerImages, *dockerRegistry, os.Getenv("GITHUB_REPOSITORY")),
+		tags:   plan.DockerTags(*dockerTags, next),
+	}
+	return publishPlan(next, latest, haveTag, bump, publishers, docker)
+}
+
+// dockerPlan is what the image build needs that depends on the version, and so
+// cannot be an action input default.
+type dockerPlan struct {
+	images string
+	tags   string
 }
 
 // publishPlan writes the plan out as step outputs and a run summary.
-func publishPlan(next, latest plan.Version, haveTag bool, bump plan.Bump, p plan.Publishers) error {
+func publishPlan(next, latest plan.Version, haveTag bool, bump plan.Bump,
+	p plan.Publishers, docker dockerPlan) error {
 	previous, rangeSpec := "", "HEAD"
 	if haveTag {
 		previous = latest.String()
@@ -116,9 +133,18 @@ func publishPlan(next, latest plan.Version, haveTag bool, bump plan.Bump, p plan
 		{"range", rangeSpec},
 		{"prerelease", fmt.Sprintf("%t", next.Prerelease())},
 		{"major-alias", next.MajorAlias()},
-		{"publish-goreleaser", fmt.Sprintf("%t", p.GoReleaser)},
-		{"publish-fledge", fmt.Sprintf("%t", p.Fledge)},
+		{"publish-order", p.String()},
+		{"docker-images", docker.images},
+		{"docker-tags", docker.tags},
 	}
+
+	// One flag per publisher. action.yml declares them in plan.Order and gates
+	// each on its own flag, so the sequence lives in one place.
+	for _, publisher := range plan.Order {
+		outputs = append(outputs,
+			[2]string{"publish-" + string(publisher), fmt.Sprintf("%t", p.Has(publisher))})
+	}
+
 	for _, o := range outputs {
 		if err := actions.Output(o[0], o[1]); err != nil {
 			return err
@@ -143,7 +169,16 @@ func publishPlan(next, latest plan.Version, haveTag bool, bump plan.Bump, p plan
 | Bump | %s |
 | Kind | %s |
 | Publishing via | %s |
-`, next, next, from, bump, kind, p))
+`, next, next, from, bump, kind, publishOrder(p)))
+}
+
+// publishOrder spells the sequence out, because a caller who listed them in
+// another order is entitled to see that the order is quill's, not theirs.
+func publishOrder(p plan.Publishers) string {
+	if len(p) < 2 {
+		return p.String()
+	}
+	return p.String() + ", in that order"
 }
 
 // parseScope reads the dropdown a caller declares. The two labels are the ones
