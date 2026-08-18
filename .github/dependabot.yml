@@ -1,0 +1,17 @@
+version: 2
+
+updates:
+  # Quill pins the actions it calls, and uses: cannot take an expression, so a
+  # pin here can only be moved by a commit. Without this they quietly rot.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: monthly
