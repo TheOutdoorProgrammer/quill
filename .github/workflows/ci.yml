@@ -1,0 +1,113 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      # Both runner families, because quill ships a binary for each and the
+      # git plumbing is the part most likely to differ between them.
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - run: go build ./...
+      - run: go vet ./...
+
+      # -race because nothing here is concurrent yet, and this is how that
+      # stays true.
+      - run: go test -race ./...
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "not gofmt'd:"; echo "$unformatted"; exit 1
+          fi
+
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: latest
+
+      # run.sh chooses which binary gates every release, so a shell bug here is
+      # a supply chain problem rather than an inconvenience.
+      - run: shellcheck scripts/run.sh
+
+  # The committed binaries are the thing callers actually execute, so the only
+  # real risk is that they stop matching the source beside them.
+  dist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: dist matches the source
+        run: make verify-dist
+
+  # Exercises the wiring the Go tests cannot see: input plumbing, the binary
+  # picker, and that a composite step actually finds its dist.
+  action:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - id: quill
+        uses: ./
+        with:
+          dry-run: "true"
+          bump: minor
+          scope: Release Candidate
+          publish: none
+          env: |
+            QUILL_SMOKE_TEST=exercised
+
+      - name: The plan came back whole
+        env:
+          VERSION: ${{ steps.quill.outputs.version }}
+          RELEASED: ${{ steps.quill.outputs.released }}
+        run: |
+          set -euo pipefail
+          case "$VERSION" in
+            v*.*.*-rc.*) ;;
+            *) echo "::error::expected a candidate version, got '$VERSION'"; exit 1 ;;
+          esac
+          if [ "$RELEASED" != "false" ]; then
+            echo "::error::a dry run reported released=$RELEASED"
+            exit 1
+          fi
+          if [ "${QUILL_SMOKE_TEST:-}" != "exercised" ]; then
+            echo "::error::the env input did not reach the job"
+            exit 1
+          fi
+          echo "dry run planned $VERSION without tagging"
