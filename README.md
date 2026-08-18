@@ -106,18 +106,20 @@ jobs:
 ## Publishers
 
 `publish` is a set, not a choice.
-List several and they all run against one version and one tag, which is what a repository carrying a binary and a container image wants.
+**Name any combination of the three**, and they all run against one version and one tag.
+There is no list of blessed pairings: `goreleaser`, `docker, fledge`, and `goreleaser, fledge, docker` are all valid, as is `none`.
 
-| `publish` | What happens |
+| Name it | What it adds |
 | --- | --- |
-| `none` | Tag, and a GitHub release with generated notes |
-| `goreleaser` | GoReleaser builds, publishes, and writes its own release |
-| `fledge` | Tag, a GitHub release, and the archive goes to a Fledge server |
-| `docker` | Tag, a GitHub release, and a multi-platform image pushed to a registry |
-| `goreleaser, docker` | Both, on the same tag |
+| `goreleaser` | GoReleaser builds, publishes, and writes its own GitHub release |
+| `fledge` | The iOS archive goes to a Fledge server |
+| `docker` | A multi-platform image is built and pushed to a registry |
+| `none` | Nothing beyond the tag |
 
-**The order is fixed: GoReleaser, then Fledge, then Docker.**
-Listing them in another order does not run them in another order, so the run summary reports the sequence that actually happened.
+Whatever you name, quill always cuts the tag, and writes a GitHub release itself unless GoReleaser is doing it.
+
+**What you cannot choose is the order.**
+They run GoReleaser, then Fledge, then Docker, and listing them differently does not change that, so the run summary reports the sequence that actually happened.
 GoReleaser goes first because it produces the release the others might reference, Docker last because an image is the artefact most likely to consume one.
 [`adr/0005`](adr/0005-publishers-run-in-a-fixed-order.md) has the reasoning, including why a caller-chosen order was built and then removed.
 
