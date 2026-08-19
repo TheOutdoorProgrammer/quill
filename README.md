@@ -207,6 +207,16 @@ Turn it off with `docker-dry-run: "false"`.
 
 Pushing to `ghcr.io` needs `packages: write` on the job, alongside `contents: write`.
 
+An `sboms:` block makes GoReleaser shell out to `syft`, which it does not install.
+Ask quill for it rather than adding a step:
+
+```yaml
+- uses: TheOutdoorProgrammer/quill@v1
+  with:
+    publish: goreleaser
+    goreleaser-syft: "true"
+```
+
 ### Signing and provenance
 
 Off by default, because each one costs build time or a permission the job may not have, and an image nobody verifies gains nothing from being signed.
