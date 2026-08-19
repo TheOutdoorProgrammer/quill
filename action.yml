@@ -70,12 +70,6 @@ inputs:
     description: Arguments for the publishing run. The dry run is always a snapshot.
     required: false
     default: release --clean
-  goreleaser-syft:
-    description: >-
-      Install syft, which GoReleaser shells out to for an `sboms:` block and
-      does not install itself. Without it that block fails the build.
-    required: false
-    default: "false"
 
   docker-images:
     description: >-
@@ -332,11 +326,10 @@ runs:
         tags: ${{ steps.plan.outputs.docker-tags }}
 
     # Before the dry run, because that run catalogs artefacts too and would
-    # otherwise fail on the check rather than on the real thing.
+    # otherwise fail on the check rather than on the real thing. Whether it is
+    # needed comes from the GoReleaser config, not from an input.
     - name: Install syft
-      if: >-
-        inputs.goreleaser-syft == 'true' &&
-        steps.plan.outputs.publish-goreleaser == 'true'
+      if: steps.plan.outputs.needs-syft == 'true'
       uses: anchore/sbom-action/download-syft@v0
 
     # A tag is only worth cutting once we know the thing can be built, so the

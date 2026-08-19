@@ -108,7 +108,11 @@ func runPlan(args []string) error {
 		images: plan.DockerImages(*dockerImages, *dockerRegistry, os.Getenv("GITHUB_REPOSITORY")),
 		tags:   plan.DockerTags(*dockerTags, next),
 	}
-	return publishPlan(next, latest, haveTag, bump, publishers, docker)
+	// Read from the config rather than asked for, so nobody discovers the
+	// requirement by having a release fail on a tool they never named.
+	needsSyft := publishers.Has(plan.GoReleaser) && plan.NeedsSyft(*dir)
+
+	return publishPlan(next, latest, haveTag, bump, publishers, docker, needsSyft)
 }
 
 // dockerPlan is what the image build needs that depends on the version, and so
@@ -120,7 +124,7 @@ type dockerPlan struct {
 
 // publishPlan writes the plan out as step outputs and a run summary.
 func publishPlan(next, latest plan.Version, haveTag bool, bump plan.Bump,
-	p plan.Publishers, docker dockerPlan) error {
+	p plan.Publishers, docker dockerPlan, needsSyft bool) error {
 	previous, rangeSpec := "", "HEAD"
 	if haveTag {
 		previous = latest.String()
@@ -136,6 +140,7 @@ func publishPlan(next, latest plan.Version, haveTag bool, bump plan.Bump,
 		{"publish-order", p.String()},
 		{"docker-images", docker.images},
 		{"docker-tags", docker.tags},
+		{"needs-syft", fmt.Sprintf("%t", needsSyft)},
 	}
 
 	// One flag per publisher. action.yml declares them in plan.Order and gates
