@@ -425,7 +425,7 @@ runs:
       if: >-
         inputs.dry-run != 'true' && inputs.docker-attest == 'true' &&
         steps.plan.outputs.publish-docker == 'true'
-      uses: actions/attest-build-provenance@v3
+      uses: actions/attest-build-provenance@v4
       with:
         subject-name: ${{ steps.plan.outputs.docker-images }}
         subject-digest: ${{ steps.docker.outputs.digest }}
@@ -435,7 +435,7 @@ runs:
       if: >-
         inputs.dry-run != 'true' && inputs.docker-sign == 'true' &&
         steps.plan.outputs.publish-docker == 'true'
-      uses: sigstore/cosign-installer@v4
+      uses: sigstore/cosign-installer@v3
 
     - name: Sign the image digest
       if: >-
@@ -483,7 +483,7 @@ runs:
     # whose provenance was never recorded.
     - name: Attest the published artefacts
       if: inputs.dry-run != 'true' && inputs.attest-paths != ''
-      uses: actions/attest-build-provenance@v3
+      uses: actions/attest-build-provenance@v4
       with:
         subject-path: ${{ inputs.attest-paths }}
 
