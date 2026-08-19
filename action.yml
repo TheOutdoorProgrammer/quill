@@ -127,6 +127,38 @@ inputs:
       does not burn a version number. The cache makes the real build cheap.
     required: false
     default: "true"
+  docker-sbom:
+    description: >-
+      Have BuildKit attach a software bill of materials to the image. Off by
+      default because it lengthens the build and not every image wants one.
+    required: false
+    default: "false"
+  docker-provenance:
+    description: >-
+      BuildKit provenance attestation, as build-push-action takes it: false,
+      true, or mode=max. Empty leaves BuildKit's own default alone.
+    required: false
+    default: ""
+  docker-sign:
+    description: >-
+      Sign the pushed digest with cosign, keylessly. Needs id-token: write on
+      the job, and signs nothing on a dry run because nothing was pushed.
+    required: false
+    default: "false"
+  docker-attest:
+    description: >-
+      Record a signed GitHub build provenance attestation for the pushed image
+      and push it to the registry. Needs attestations: write on the job.
+    required: false
+    default: "false"
+
+  attest-paths:
+    description: >-
+      Files to record GitHub build provenance for once publishing has finished,
+      as a path or glob. For release artefacts a publisher produced. Needs
+      attestations: write on the job.
+    required: false
+    default: ""
 
   fledge-server:
     description: Base URL of the Fledge server. Leave empty to let fledge.yaml supply it.
@@ -384,6 +416,41 @@ runs:
           ${{ inputs.docker-build-args }}
         cache-from: ${{ inputs.docker-cache == 'true' && 'type=gha' || '' }}
         cache-to: ${{ inputs.docker-cache == 'true' && 'type=gha,mode=max' || '' }}
+        sbom: ${{ inputs.docker-sbom }}
+        provenance: ${{ inputs.docker-provenance }}
+
+    # Attesting before signing so a failure here leaves an unsigned image
+    # rather than a signed one nothing vouches for.
+    - name: Attest the image
+      if: >-
+        inputs.dry-run != 'true' && inputs.docker-attest == 'true' &&
+        steps.plan.outputs.publish-docker == 'true'
+      uses: actions/attest-build-provenance@v3
+      with:
+        subject-name: ${{ steps.plan.outputs.docker-images }}
+        subject-digest: ${{ steps.docker.outputs.digest }}
+        push-to-registry: true
+
+    - name: Install cosign
+      if: >-
+        inputs.dry-run != 'true' && inputs.docker-sign == 'true' &&
+        steps.plan.outputs.publish-docker == 'true'
+      uses: sigstore/cosign-installer@v4
+
+    - name: Sign the image digest
+      if: >-
+        inputs.dry-run != 'true' && inputs.docker-sign == 'true' &&
+        steps.plan.outputs.publish-docker == 'true'
+      shell: bash
+      env:
+        DIGEST: ${{ steps.docker.outputs.digest }}
+        TAGS: ${{ steps.docker_meta.outputs.tags }}
+      run: |
+        set -euo pipefail
+        # Every tag resolves to one digest, so signing the first by digest
+        # covers all of them and signing each would just repeat the work.
+        image="${TAGS%%$'\n'*}"
+        cosign sign --yes "${image%%:*}@${DIGEST}"
 
     # Skipped when GoReleaser is publishing, because it makes the release itself
     # and the second attempt at the same tag fails. Last, so a publisher that
@@ -410,6 +477,15 @@ runs:
           args+=(--prerelease)
         fi
         gh release create "$VERSION" "${args[@]}"
+
+    # After every publisher, because the artefacts being attested are the ones
+    # they produced, and before the alias moves so nothing points at a release
+    # whose provenance was never recorded.
+    - name: Attest the published artefacts
+      if: inputs.dry-run != 'true' && inputs.attest-paths != ''
+      uses: actions/attest-build-provenance@v3
+      with:
+        subject-path: ${{ inputs.attest-paths }}
 
     # Last, and only once everything published, or the alias points people at a
     # release that failed halfway through.

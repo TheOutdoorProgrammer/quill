@@ -207,6 +207,35 @@ Turn it off with `docker-dry-run: "false"`.
 
 Pushing to `ghcr.io` needs `packages: write` on the job, alongside `contents: write`.
 
+### Signing and provenance
+
+Off by default, because each one costs build time or a permission the job may not have, and an image nobody verifies gains nothing from being signed.
+Turn on what you actually check:
+
+```yaml
+- uses: TheOutdoorProgrammer/quill@v1
+  with:
+    publish: docker
+    docker-sbom: "true"
+    docker-provenance: mode=max
+    docker-sign: "true"
+    docker-attest: "true"
+    attest-paths: dist/*
+```
+
+| Input | What it does | What the job needs |
+| --- | --- | --- |
+| `docker-sbom` | BuildKit attaches a bill of materials to the image | |
+| `docker-provenance` | BuildKit provenance, as `false`, `true` or `mode=max` | |
+| `docker-sign` | Signs the pushed digest with cosign, keylessly | `id-token: write` |
+| `docker-attest` | Signed GitHub build provenance, pushed to the registry | `attestations: write`, `packages: write` |
+| `attest-paths` | Build provenance for files a publisher produced, as a path or glob | `attestations: write` |
+
+Every tag resolves to one digest, so the image is signed once by digest and all its tags are covered.
+`attest-paths` runs after every publisher, so it can name artefacts GoReleaser wrote, and none of it runs on a dry run because nothing was published.
+
+Attestation is recorded before signing, so a failure leaves an unsigned image rather than a signed one whose provenance nobody wrote down.
+
 ### Fledge
 
 Every Fledge input defaults to empty on purpose, because Fledge reads the `fledge.yaml` beside your app.
