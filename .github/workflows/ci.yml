@@ -152,3 +152,29 @@ jobs:
             echo "::error::a dry run planned a candidate as latest: $TAGS"
             exit 1
           fi
+
+  # Proves the runner boundary itself: a macOS job stages a file, and an Ubuntu
+  # reusable job downloads it before Quill performs Fledge's pre-tag check.
+  stage:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Make a staged fixture
+        run: printf 'not a real ipa\n' > "$RUNNER_TEMP/fixture.ipa"
+
+      - uses: ./stage
+        with:
+          name: quill-ci-${{ github.run_id }}
+          path: ${{ runner.temp }}/fixture.ipa
+
+  staged-release:
+    needs: stage
+    permissions:
+      contents: read
+    uses: ./.github/workflows/staged-release.yml
+    with:
+      artifact-name: quill-ci-${{ github.run_id }}
+      fledge-ipa: fixture.ipa
+      publish: fledge
+      dry-run: true
