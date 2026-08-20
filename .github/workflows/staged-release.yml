@@ -1,0 +1,260 @@
+name: Staged Quill release
+
+on:
+  workflow_call:
+    inputs:
+      artifact-name:
+        description: Artifact uploaded by TheOutdoorProgrammer/quill/stage.
+        type: string
+        default: quill-release
+      fledge-ipa:
+        description: Path to the IPA inside the staged artifact.
+        type: string
+        default: ""
+      bump:
+        description: Which part of the version to bump.
+        type: string
+        default: patch
+      scope:
+        description: Release or Release Candidate.
+        type: string
+        default: Release
+      publish:
+        description: Publishers to run.
+        type: string
+        default: goreleaser,fledge,docker
+      dry-run:
+        description: Build and validate without tagging or publishing.
+        type: boolean
+        default: false
+      release-branch:
+        description: Only ref a real release may be cut from.
+        type: string
+        default: refs/heads/main
+      major-alias:
+        description: Move the vN alias after a successful stable release.
+        type: boolean
+        default: true
+      github-release:
+        description: auto, true, or false.
+        type: string
+        default: auto
+      working-directory:
+        description: Checkout directory to release from.
+        type: string
+        default: "."
+      goreleaser-version:
+        description: GoReleaser version constraint.
+        type: string
+        default: "~> v2"
+      goreleaser-args:
+        description: Arguments for the publishing run.
+        type: string
+        default: release --clean
+      docker-images:
+        description: Image name. Empty uses Quill's default.
+        type: string
+        default: ""
+      docker-registry:
+        description: Registry to log in to and use for the default image.
+        type: string
+        default: ghcr.io
+      docker-login:
+        description: Log in before building the image.
+        type: boolean
+        default: true
+      docker-username:
+        description: Registry username. Empty uses github.actor.
+        type: string
+        default: ""
+      docker-context:
+        description: Docker build context.
+        type: string
+        default: "."
+      docker-file:
+        description: Dockerfile path. Empty uses the context default.
+        type: string
+        default: ""
+      docker-platforms:
+        description: Docker platforms to build.
+        type: string
+        default: linux/amd64,linux/arm64
+      docker-build-args:
+        description: Extra Docker build arguments.
+        type: string
+        default: ""
+      docker-tags:
+        description: docker/metadata-action tag specification.
+        type: string
+        default: ""
+      docker-cache:
+        description: Use the GitHub Actions build cache.
+        type: boolean
+        default: true
+      docker-dry-run:
+        description: Build the image before tagging without pushing it.
+        type: boolean
+        default: true
+      docker-sbom:
+        description: Attach a BuildKit SBOM to the image.
+        type: boolean
+        default: false
+      docker-provenance:
+        description: BuildKit provenance setting.
+        type: string
+        default: ""
+      docker-sign:
+        description: Sign the pushed image digest with cosign.
+        type: boolean
+        default: false
+      docker-attest:
+        description: Push GitHub build provenance for the image.
+        type: boolean
+        default: false
+      attest-paths:
+        description: Paths or globs to attest after publishing.
+        type: string
+        default: ""
+      fledge-audience:
+        description: Workload identity audience. Empty uses the server URL.
+        type: string
+        default: ""
+      fledge-notes:
+        description: Note shown on the Fledge install page.
+        type: string
+        default: ""
+      fledge-fail-on-development-signing:
+        description: Fail when the staged archive is development signed.
+        type: boolean
+        default: false
+      fledge-secure:
+        description: Keep the Fledge server URL out of logs and summaries.
+        type: boolean
+        default: false
+      tap-repository:
+        description: Homebrew tap repository reachable by the GitHub App.
+        type: string
+        default: homebrew-tap
+    secrets:
+      publisher-env:
+        description: KEY=value lines exported before publishing.
+        required: false
+      docker-password:
+        description: Registry password. Empty uses github.token.
+        required: false
+      fledge-server:
+        description: Fledge server URL. Empty lets fledge.yaml provide it.
+        required: false
+      fledge-token:
+        description: Fledge token. Empty uses workload identity.
+        required: false
+      tap-app-id:
+        description: GitHub App id for a Homebrew tap.
+        required: false
+      tap-private-key:
+        description: GitHub App private key for a Homebrew tap.
+        required: false
+    outputs:
+      version:
+        description: Version Quill planned or cut.
+        value: ${{ jobs.release.outputs.version }}
+      previous:
+        description: Previous release tag.
+        value: ${{ jobs.release.outputs.previous }}
+      range:
+        description: Commit range covered by the release.
+        value: ${{ jobs.release.outputs.range }}
+      prerelease:
+        description: Whether the version is a release candidate.
+        value: ${{ jobs.release.outputs.prerelease }}
+      released:
+        description: Whether a tag was actually cut.
+        value: ${{ jobs.release.outputs.released }}
+      publish-order:
+        description: Publishers that ran, in their real order.
+        value: ${{ jobs.release.outputs.publish-order }}
+      image-tags:
+        description: Image tags Quill pushed.
+        value: ${{ jobs.release.outputs.image-tags }}
+      image-digest:
+        description: Digest of the pushed image.
+        value: ${{ jobs.release.outputs.image-digest }}
+      page-url:
+        description: Fledge install page.
+        value: ${{ jobs.release.outputs.page-url }}
+      install-url:
+        description: Fledge itms-services manifest URL.
+        value: ${{ jobs.release.outputs.install-url }}
+
+jobs:
+  release:
+    # The point of this workflow is to leave platform-specific compilation on
+    # its own runner and put Docker back on a runner where it is supported.
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.quill.outputs.version }}
+      previous: ${{ steps.quill.outputs.previous }}
+      range: ${{ steps.quill.outputs.range }}
+      prerelease: ${{ steps.quill.outputs.prerelease }}
+      released: ${{ steps.quill.outputs.released }}
+      publish-order: ${{ steps.quill.outputs.publish-order }}
+      image-tags: ${{ steps.quill.outputs.image-tags }}
+      image-digest: ${{ steps.quill.outputs.image-digest }}
+      page-url: ${{ steps.quill.outputs.page-url }}
+      install-url: ${{ steps.quill.outputs.install-url }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # Quill derives the next version from the complete tag history.
+          fetch-depth: 0
+
+      - name: Download staged release assets
+        uses: actions/download-artifact@v5
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: ${{ runner.temp }}/quill-staged
+
+      # Keep the publisher implementation in the composite action. This
+      # workflow only owns the job boundary and artifact handoff.
+      - id: quill
+        uses: TheOutdoorProgrammer/quill@v1
+        with:
+          bump: ${{ inputs.bump }}
+          scope: ${{ inputs.scope }}
+          publish: ${{ inputs.publish }}
+          dry-run: ${{ inputs.dry-run }}
+          release-branch: ${{ inputs.release-branch }}
+          major-alias: ${{ inputs.major-alias }}
+          working-directory: ${{ inputs.working-directory }}
+          env: ${{ secrets.publisher-env }}
+          github-token: ${{ github.token }}
+          github-release: ${{ inputs.github-release }}
+          goreleaser-version: ${{ inputs.goreleaser-version }}
+          goreleaser-args: ${{ inputs.goreleaser-args }}
+          docker-images: ${{ inputs.docker-images }}
+          docker-registry: ${{ inputs.docker-registry }}
+          docker-login: ${{ inputs.docker-login }}
+          docker-username: ${{ inputs.docker-username != '' && inputs.docker-username || github.actor }}
+          docker-password: ${{ secrets.docker-password != '' && secrets.docker-password || github.token }}
+          docker-context: ${{ inputs.docker-context }}
+          docker-file: ${{ inputs.docker-file }}
+          docker-platforms: ${{ inputs.docker-platforms }}
+          docker-build-args: ${{ inputs.docker-build-args }}
+          docker-tags: ${{ inputs.docker-tags }}
+          docker-cache: ${{ inputs.docker-cache }}
+          docker-dry-run: ${{ inputs.docker-dry-run }}
+          docker-sbom: ${{ inputs.docker-sbom }}
+          docker-provenance: ${{ inputs.docker-provenance }}
+          docker-sign: ${{ inputs.docker-sign }}
+          docker-attest: ${{ inputs.docker-attest }}
+          attest-paths: ${{ inputs.attest-paths }}
+          fledge-server: ${{ secrets.fledge-server }}
+          fledge-token: ${{ secrets.fledge-token }}
+          fledge-audience: ${{ inputs.fledge-audience }}
+          fledge-ipa: ${{ inputs.fledge-ipa != '' && format('{0}/quill-staged/{1}', runner.temp, inputs.fledge-ipa) || '' }}
+          fledge-notes: ${{ inputs.fledge-notes }}
+          fledge-fail-on-development-signing: ${{ inputs.fledge-fail-on-development-signing }}
+          fledge-secure: ${{ inputs.fledge-secure }}
+          tap-app-id: ${{ secrets.tap-app-id }}
+          tap-private-key: ${{ secrets.tap-private-key }}
+          tap-repository: ${{ inputs.tap-repository }}
