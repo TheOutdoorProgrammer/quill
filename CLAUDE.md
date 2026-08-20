@@ -15,7 +15,9 @@ Any change under `cmd/` or `internal/` needs `make dist` and the result committe
 
 ## Layout
 
-- `action.yml` is the composite action, and the only public surface.
+- `action.yml` is the single-runner composite release action.
+- `stage/action.yml` stages caller-built files for a later release job.
+- `.github/workflows/staged-release.yml` moves staged files onto Linux and runs `action.yml` there.
 - `cmd/quill/` is one file per subcommand.
 - `internal/plan/` is the version arithmetic and the publisher set.
 - `internal/gitrepo/` is the git plumbing.
