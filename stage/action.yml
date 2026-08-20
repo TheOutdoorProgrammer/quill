@@ -1,0 +1,44 @@
+name: Stage Quill release assets
+description: Hand runner-specific build outputs to a later Quill release job.
+author: TheOutdoorProgrammer
+
+inputs:
+  path:
+    description: File, directory, or glob to stage for the release job.
+    required: true
+  name:
+    description: Workflow artifact name shared with the staged release workflow.
+    required: false
+    default: quill-release
+  retention-days:
+    description: How long GitHub should retain the handoff artifact.
+    required: false
+    default: "1"
+
+outputs:
+  artifact-name:
+    description: Name the staged release workflow should download.
+    value: ${{ inputs.name }}
+  artifact-id:
+    description: GitHub artifact id.
+    value: ${{ steps.upload.outputs.artifact-id }}
+  artifact-url:
+    description: URL for the staged artifact in this workflow run.
+    value: ${{ steps.upload.outputs.artifact-url }}
+  artifact-digest:
+    description: SHA-256 digest of the staged artifact archive.
+    value: ${{ steps.upload.outputs.artifact-digest }}
+
+runs:
+  using: composite
+  steps:
+    # A rerun keeps the same workflow run id, so an artifact from the failed
+    # attempt may still exist. Replacing it makes rerunning the job safe.
+    - id: upload
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.name }}
+        path: ${{ inputs.path }}
+        if-no-files-found: error
+        retention-days: ${{ inputs.retention-days }}
+        overwrite: true
