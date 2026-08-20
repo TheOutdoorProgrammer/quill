@@ -103,6 +103,62 @@ jobs:
 
 `dry-run` also drops the branch guard, because a pull request never runs on your release branch.
 
+### Cross-runner releases
+
+A composite action cannot change runners between its steps.
+If part of the build needs macOS but Docker needs Linux, keep the platform-specific build in the caller, stage its output, and call Quill's reusable release workflow for the publishers.
+
+```yaml
+jobs:
+  ios:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # Your signing, archive and export steps stay here.
+      - run: ./scripts/build-ios.sh
+
+      - id: stage
+        uses: TheOutdoorProgrammer/quill/stage@v1
+        with:
+          path: build/MyApp.ipa
+
+    outputs:
+      artifact-name: ${{ steps.stage.outputs.artifact-name }}
+
+  release:
+    needs: ios
+    uses: TheOutdoorProgrammer/quill/.github/workflows/staged-release.yml@v1
+    with:
+      artifact-name: ${{ needs.ios.outputs.artifact-name }}
+      fledge-ipa: MyApp.ipa
+      bump: ${{ inputs.bump }}
+      scope: ${{ inputs.scope }}
+      publish: goreleaser,fledge,docker
+    secrets:
+      fledge-server: ${{ secrets.FLEDGE_URL }}
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+```
+
+`quill/stage` is only an artifact handoff.
+It does not own Xcode, signing, provisioning, or any other repository-specific build logic.
+The reusable workflow downloads that artifact onto an Ubuntu runner and then invokes the same Quill composite action documented everywhere else on this page.
+
+That means GoReleaser, Fledge and Docker still share one release transaction and run in Quill's normal fixed order.
+In particular, GoReleaser's `dist/` tree is still on disk when Docker runs, so an image can package the exact binary GoReleaser built instead of compiling it again:
+
+```dockerfile
+ARG TARGETARCH
+COPY dist/myapp_linux_${TARGETARCH}_*/myapp /usr/local/bin/myapp
+```
+
+Use the staged workflow whenever selected publishers cannot all run on the platform-specific build runner.
+For an ordinary single-runner release, keep using `TheOutdoorProgrammer/quill@v1` directly.
+[`adr/0006`](adr/0006-stage-platform-specific-builds.md) records why the two interfaces share the same publisher implementation rather than becoming two release systems.
+
 ## Publishers
 
 `publish` is a set, not a choice.
