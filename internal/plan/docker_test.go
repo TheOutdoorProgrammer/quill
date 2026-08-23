@@ -56,16 +56,36 @@ func TestDockerTagsCarryTheVersionRatherThanTheRef(t *testing.T) {
 	}
 }
 
-// A candidate must never become what `docker pull` gives you with no tag.
-func TestDockerTagsWithholdLatestFromACandidate(t *testing.T) {
+// A candidate must never become what `docker pull` gives you with no tag, nor
+// what a deployment resolves.
+func TestDockerTagsWithholdMovingTagsFromACandidate(t *testing.T) {
 	release, _ := Parse("v1.4.2")
-	if got := DockerTags("", release); !strings.Contains(got, "type=raw,value=latest,enable=true") {
-		t.Errorf("a release should take latest:\n%s", got)
+	for _, want := range []string{
+		"type=raw,value=latest,enable=true",
+		"type=raw,value=production,enable=true",
+	} {
+		if got := DockerTags("", release); !strings.Contains(got, want) {
+			t.Errorf("a release should take %q:\n%s", want, got)
+		}
 	}
 
 	candidate, _ := Parse("v1.4.2-rc.1")
-	if got := DockerTags("", candidate); !strings.Contains(got, "type=raw,value=latest,enable=false") {
-		t.Errorf("a candidate must not take latest:\n%s", got)
+	for _, want := range []string{
+		"type=raw,value=latest,enable=false",
+		"type=raw,value=production,enable=false",
+	} {
+		if got := DockerTags("", candidate); !strings.Contains(got, want) {
+			t.Errorf("a candidate must not take %q:\n%s", want, got)
+		}
+	}
+}
+
+// An explicit spec replaces the default outright, so a caller that does not
+// want a floating production tag can opt out.
+func TestDockerTagsExplicitSpecDropsProduction(t *testing.T) {
+	v, _ := Parse("v1.4.2")
+	if got := DockerTags("type=semver,pattern={{version}},value=v1.4.2", v); strings.Contains(got, "production") {
+		t.Errorf("an explicit spec still carried production:\n%s", got)
 	}
 }
 
