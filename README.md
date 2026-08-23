@@ -265,15 +265,22 @@ Quill does the whole thing: Buildx, the registry login, the tags, and a multi-pl
 That defaults to `ghcr.io/<this repository>`, lowercased, built for `linux/amd64` and `linux/arm64`, authenticated with the job's own token, cached in the Actions cache.
 `VERSION` and `COMMIT` are passed as build arguments, so a Dockerfile can stamp them without the workflow knowing the version.
 
-Tags come out as `1.2.3`, `1.2`, `1`, and `latest`:
+Tags come out as `1.2.3`, `1.2`, `1`, `latest`, and `production`:
 
 | Cutting | Tags pushed |
 | --- | --- |
-| `v1.2.3` | `1.2.3`, `1.2`, `1`, `latest` |
+| `v1.2.3` | `1.2.3`, `1.2`, `1`, `latest`, `production` |
 | `v1.3.0-rc.1` | `1.3.0-rc.1` |
 
-**A release candidate never takes `latest`**, and never takes the major or minor tags either.
-That matters more than it looks: an unguarded `latest` means `docker pull` with no tag hands people a candidate.
+**A release candidate takes neither `latest` nor `production`**, and never takes the major or minor tags either.
+That matters more than it looks: an unguarded `latest` means `docker pull` with no tag hands people a candidate, and an unguarded `production` deploys one.
+
+`production` exists so a deployment can resolve a tag instead of a pinned digest.
+Point an image data source or a manifest at `production`, and cutting a release is what promotes it, with no digest to copy by hand.
+Rolling back is re-pointing that tag at the previous digest rather than editing infrastructure code.
+
+Setting `docker-tags` replaces the whole default spec, `production` included.
+A repository whose image should never auto-deploy should set it.
 
 The version is passed to the tagger explicitly rather than read off the ref, because quill has not created the tag yet when the image is built.
 For the same reason, do not reach for `github.ref_name` in a build argument: the workflow runs on your default branch, so it is not the version.
@@ -429,7 +436,7 @@ A tag left behind burns that version number: the next attempt computes the one a
 | `docker-file` | | Empty means the default for the context |
 | `docker-platforms` | `linux/amd64,linux/arm64` | |
 | `docker-build-args` | | Extra args. `VERSION` and `COMMIT` are always passed first |
-| `docker-tags` | | `metadata-action` spec. Empty means semver plus a guarded `latest` |
+| `docker-tags` | | `metadata-action` spec. Empty means semver plus a guarded `latest` and `production` |
 | `docker-cache` | `true` | Use the Actions build cache |
 | `docker-dry-run` | `true` | Build without pushing before tagging |
 | `fledge-server` | | Empty defers to `fledge.yaml` |

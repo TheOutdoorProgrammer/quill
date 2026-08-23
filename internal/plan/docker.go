@@ -28,13 +28,15 @@ func DockerTags(explicit string, v Version) string {
 		return explicit
 	}
 
-	// metadata-action drops major and minor tags for a prerelease on its own.
-	// `latest` is raw, so it needs saying: a candidate must never become what
-	// `docker pull` gives you with no tag.
+	// metadata-action drops major and minor for a prerelease on its own. The
+	// raw two need saying: `latest` is a bare `docker pull` and `production`
+	// is what a deployment resolves, so a candidate must take neither.
+	release := !v.Prerelease()
 	return strings.Join([]string{
 		fmt.Sprintf("type=semver,pattern={{version}},value=%s", v),
 		fmt.Sprintf("type=semver,pattern={{major}}.{{minor}},value=%s", v),
 		fmt.Sprintf("type=semver,pattern={{major}},value=%s", v),
-		fmt.Sprintf("type=raw,value=latest,enable=%t", !v.Prerelease()),
+		fmt.Sprintf("type=raw,value=latest,enable=%t", release),
+		fmt.Sprintf("type=raw,value=production,enable=%t", release),
 	}, "\n")
 }

@@ -113,8 +113,9 @@ inputs:
     default: ""
   docker-tags:
     description: >-
-      docker/metadata-action tag spec. The default is semver plus latest, with
-      latest withheld from a release candidate.
+      docker/metadata-action tag spec. The default is semver plus latest and
+      production, both withheld from a release candidate. Setting this replaces
+      the default outright, production included.
     required: false
     default: ""
   docker-cache:
