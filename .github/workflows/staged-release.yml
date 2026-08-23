@@ -64,7 +64,15 @@ on:
         type: boolean
         default: true
       docker-username:
-        description: Registry username. Empty uses github.actor.
+        description: Registry username. Empty uses the GCP OAuth username or github.actor.
+        type: string
+        default: ""
+      gcp-workload-identity-provider:
+        description: GCP Workload Identity Provider used to mint a registry access token.
+        type: string
+        default: ""
+      gcp-service-account:
+        description: GCP service account impersonated for registry access.
         type: string
         default: ""
       docker-context:
@@ -214,6 +222,22 @@ jobs:
           name: ${{ inputs.artifact-name }}
           path: ${{ runner.temp }}/quill-staged
 
+      - name: Validate GCP workload identity inputs
+        if: ${{ (inputs.gcp-workload-identity-provider == '' && inputs.gcp-service-account != '') || (inputs.gcp-workload-identity-provider != '' && inputs.gcp-service-account == '') }}
+        run: |
+          echo "::error::gcp-workload-identity-provider and gcp-service-account must be set together"
+          exit 1
+
+      - id: gcp-auth
+        if: ${{ inputs.gcp-workload-identity-provider != '' && inputs.gcp-service-account != '' }}
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ inputs.gcp-workload-identity-provider }}
+          service_account: ${{ inputs.gcp-service-account }}
+          token_format: access_token
+          # Quill and GoReleaser require the checkout to remain clean.
+          create_credentials_file: false
+
       # Keep the publisher implementation in the composite action. This
       # workflow only owns the job boundary and artifact handoff.
       - id: quill
@@ -234,8 +258,8 @@ jobs:
           docker-images: ${{ inputs.docker-images }}
           docker-registry: ${{ inputs.docker-registry }}
           docker-login: ${{ inputs.docker-login }}
-          docker-username: ${{ inputs.docker-username != '' && inputs.docker-username || github.actor }}
-          docker-password: ${{ secrets.docker-password != '' && secrets.docker-password || github.token }}
+          docker-username: ${{ inputs.docker-username != '' && inputs.docker-username || steps.gcp-auth.outputs.access_token != '' && 'oauth2accesstoken' || github.actor }}
+          docker-password: ${{ secrets.docker-password != '' && secrets.docker-password || steps.gcp-auth.outputs.access_token != '' && steps.gcp-auth.outputs.access_token || github.token }}
           docker-context: ${{ inputs.docker-context }}
           docker-file: ${{ inputs.docker-file }}
           docker-platforms: ${{ inputs.docker-platforms }}
