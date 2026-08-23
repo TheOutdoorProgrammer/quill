@@ -20,6 +20,10 @@ Publishing is a set rather than a choice, so a repository carrying more than one
 They run in a fixed sequence, GoReleaser then Fledge then Docker, and a caller listing them differently does not change it (adr/0005).
 Every `fledge-*` input defaults to empty because Fledge reads the `fledge.yaml` beside the app, so configuration has one home.
 
+Cross-runner releases use `quill/stage@v1` to move a caller-built artifact into `.github/workflows/staged-release.yml@v1`, where every selected publisher runs in one Linux release transaction.
+The staged workflow can mint a short-lived GCP Artifact Registry token from optional `gcp-workload-identity-provider` and `gcp-service-account` inputs.
+Both inputs are required together, explicit Docker credentials retain priority, and callers that omit them keep the existing GHCR actor/token defaults.
+
 Optional `tap-app-id` and `tap-private-key` inputs mint a scoped, hour-long token and export `HOMEBREW_TAP_GITHUB_TOKEN`, which is the boilerplate every repository publishing a cask to `repository:stout/homebrew-tap` used to carry itself.
 
 The logic is Go in `cmd/quill` and `internal/`, cross-compiled and **committed** to `dist/` for linux and darwin on amd64 and arm64 (adr/0001).
@@ -56,3 +60,8 @@ Matrix and `needs` are not reachable: they are job-level, and a composite action
 **Fledge's action is pinned at `@v1`, a moving tag, and cannot be an input.**
 `uses:` does not accept expressions.
 Tracking Fledge's major is deliberate, so its changes reach quill's users without quill cutting a release.
+
+**GCP OIDC authentication belongs inside the staged reusable workflow.**
+A caller job that invokes a reusable workflow cannot also run an authentication step.
+Minting the token in a separate job would relay credential material across the job boundary and start its lifetime before the publisher job begins.
+Pass the workload identity provider and service account as normal workflow inputs, grant the called job `id-token: write`, and let Quill mint the access token where Docker consumes it.

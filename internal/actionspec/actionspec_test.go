@@ -11,7 +11,10 @@ import (
 	"github.com/TheOutdoorProgrammer/quill/internal/plan"
 )
 
-const actionPath = "../../action.yml"
+const (
+	actionPath         = "../../action.yml"
+	stagedWorkflowPath = "../../.github/workflows/staged-release.yml"
+)
 
 func action(t *testing.T) string {
 	t.Helper()
@@ -19,6 +22,16 @@ func action(t *testing.T) string {
 	raw, err := os.ReadFile(actionPath)
 	if err != nil {
 		t.Fatalf("reading the action: %v", err)
+	}
+	return string(raw)
+}
+
+func stagedWorkflow(t *testing.T) string {
+	t.Helper()
+
+	raw, err := os.ReadFile(stagedWorkflowPath)
+	if err != nil {
+		t.Fatalf("reading the staged workflow: %v", err)
 	}
 	return string(raw)
 }
@@ -82,6 +95,41 @@ func TestEveryPublisherHasInputs(t *testing.T) {
 	for _, publisher := range plan.Order {
 		if !strings.Contains(yaml, fmt.Sprintf("\n  %s-", publisher)) {
 			t.Errorf("%s has no %s-* inputs declared", publisher, publisher)
+		}
+	}
+}
+
+func TestStagedWorkflowRegistryAuthenticationFallbacks(t *testing.T) {
+	yaml := stagedWorkflow(t)
+
+	for _, want := range []string{
+		"gcp-workload-identity-provider:",
+		"gcp-service-account:",
+		"uses: google-github-actions/auth@v3",
+		"create_credentials_file: false",
+		"secrets.docker-password != '' && secrets.docker-password",
+		"steps.gcp-auth.outputs.access_token != '' && steps.gcp-auth.outputs.access_token",
+		"|| github.token",
+		"inputs.docker-username != '' && inputs.docker-username",
+		"steps.gcp-auth.outputs.access_token != '' && 'oauth2accesstoken'",
+		"|| github.actor",
+	} {
+		if !strings.Contains(yaml, want) {
+			t.Errorf("staged workflow is missing %q", want)
+		}
+	}
+}
+
+func TestStagedWorkflowRequiresCompleteGCPIdentity(t *testing.T) {
+	yaml := stagedWorkflow(t)
+
+	for _, want := range []string{
+		"inputs.gcp-workload-identity-provider == '' && inputs.gcp-service-account != ''",
+		"inputs.gcp-workload-identity-provider != '' && inputs.gcp-service-account == ''",
+		"inputs.gcp-workload-identity-provider != '' && inputs.gcp-service-account != ''",
+	} {
+		if !strings.Contains(yaml, want) {
+			t.Errorf("staged workflow is missing GCP identity guard %q", want)
 		}
 	}
 }

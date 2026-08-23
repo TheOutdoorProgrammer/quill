@@ -109,9 +109,32 @@ A composite action cannot change runners between its steps.
 If part of the build needs macOS but Docker needs Linux, keep the platform-specific build in the caller, stage its output, and call Quill's reusable release workflow for the publishers.
 
 ```yaml
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: What to cut
+        type: choice
+        default: Release
+        options: [Release, Release Candidate]
+      bump:
+        description: Which part of the version to bump
+        type: choice
+        default: patch
+        options: [patch, minor, major]
+      dry-run:
+        description: Build and sign, publish nothing, cut no tag
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
 jobs:
   ios:
-    runs-on: macos-latest
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v5
 
@@ -134,18 +157,32 @@ jobs:
       fledge-ipa: MyApp.ipa
       bump: ${{ inputs.bump }}
       scope: ${{ inputs.scope }}
+      dry-run: ${{ inputs.dry-run }}
       publish: goreleaser,fledge,docker
+      docker-images: us-east1-docker.pkg.dev/my-project/releases/myapp
+      docker-registry: us-east1-docker.pkg.dev
+      gcp-workload-identity-provider: ${{ vars.GCP_WIF_PROVIDER }}
+      gcp-service-account: ${{ vars.GCP_RELEASER_SA }}
     secrets:
       fledge-server: ${{ secrets.FLEDGE_URL }}
     permissions:
       contents: write
-      packages: write
       id-token: write
 ```
 
 `quill/stage` is only an artifact handoff.
 It does not own Xcode, signing, provisioning, or any other repository-specific build logic.
 The reusable workflow downloads that artifact onto an Ubuntu runner and then invokes the same Quill composite action documented everywhere else on this page.
+
+The GCP inputs are optional and must be supplied together.
+When they are present, Quill uses GitHub OIDC to impersonate the service account and passes its short-lived access token to Docker with the Artifact Registry OAuth username.
+The called job needs `id-token: write`, and the service account needs permission to write to the selected registry.
+No service-account key or registry password is stored in GitHub.
+
+Existing callers do not need to change.
+Without the GCP inputs, the workflow still defaults to `github.actor` and `github.token` for GHCR.
+An explicit `docker-username` and `docker-password` secret still take precedence, so Docker Hub and other registry setups keep their current behavior.
+GHCR callers should grant `packages: write`; the GCP example does not need that permission.
 
 That means GoReleaser, Fledge and Docker still share one release transaction and run in Quill's normal fixed order.
 In particular, GoReleaser's `dist/` tree is still on disk when Docker runs, so an image can package the exact binary GoReleaser built instead of compiling it again:

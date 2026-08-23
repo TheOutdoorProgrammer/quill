@@ -56,5 +56,34 @@ The caller owns permissions.
 Grant `contents: write` for tags and GitHub releases, `packages: write` when Docker pushes to GHCR, and `id-token: write` when Fledge or cosign uses workload identity.
 Add the attestation permissions when the corresponding Quill inputs are enabled.
 
+## GCP Artifact Registry
+
+The reusable workflow can mint a short-lived Artifact Registry credential through GitHub OIDC.
+Pass both identity inputs and grant `id-token: write` to the called job:
+
+```yaml
+  release:
+    needs: ios
+    uses: TheOutdoorProgrammer/quill/.github/workflows/staged-release.yml@v1
+    with:
+      artifact-name: ${{ needs.ios.outputs.artifact-name }}
+      fledge-ipa: MyApp.ipa
+      publish: goreleaser,fledge,docker
+      docker-images: us-east1-docker.pkg.dev/my-project/releases/myapp
+      docker-registry: us-east1-docker.pkg.dev
+      gcp-workload-identity-provider: ${{ vars.GCP_WIF_PROVIDER }}
+      gcp-service-account: ${{ vars.GCP_RELEASER_SA }}
+    secrets:
+      fledge-server: ${{ secrets.FLEDGE_URL }}
+    permissions:
+      contents: write
+      id-token: write
+```
+
+`gcp-workload-identity-provider` and `gcp-service-account` are optional, but setting only one is an error.
+When both are empty, registry authentication works exactly as before: explicit `docker-username` and `docker-password` values take priority, followed by the job actor and token used for GHCR.
+When both GCP inputs are present and no explicit registry credential is supplied, Quill uses the minted access token with Artifact Registry's `oauth2accesstoken` username.
+The authentication action does not create a credentials file because GoReleaser rejects a dirty checkout.
+
 A dry run still crosses the runner boundary and downloads the artifact.
 Quill then performs its normal pre-tag builds and checks without cutting a tag or publishing anything.
