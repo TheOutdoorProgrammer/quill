@@ -13,6 +13,7 @@ import (
 
 const (
 	actionPath         = "../../action.yml"
+	appleSigningPath   = "../../apple-signing/action.yml"
 	stagedWorkflowPath = "../../.github/workflows/staged-release.yml"
 )
 
@@ -32,6 +33,16 @@ func stagedWorkflow(t *testing.T) string {
 	raw, err := os.ReadFile(stagedWorkflowPath)
 	if err != nil {
 		t.Fatalf("reading the staged workflow: %v", err)
+	}
+	return string(raw)
+}
+
+func appleSigningAction(t *testing.T) string {
+	t.Helper()
+
+	raw, err := os.ReadFile(appleSigningPath)
+	if err != nil {
+		t.Fatalf("reading the Apple signing action: %v", err)
 	}
 	return string(raw)
 }
@@ -131,5 +142,41 @@ func TestStagedWorkflowRequiresCompleteGCPIdentity(t *testing.T) {
 		if !strings.Contains(yaml, want) {
 			t.Errorf("staged workflow is missing GCP identity guard %q", want)
 		}
+	}
+}
+
+func TestAppleSigningActionKeepsSecretsOutOfRunInterpolation(t *testing.T) {
+	yaml := appleSigningAction(t)
+
+	for _, secret := range []string{
+		"inputs.p12-file-base64",
+		"inputs.p12-password",
+		"inputs.api-private-key",
+	} {
+		if !strings.Contains(yaml, secret) {
+			t.Errorf("Apple signing action does not consume %s", secret)
+		}
+	}
+
+	runBlocks := strings.Split(yaml, "      run: |")
+	for _, block := range runBlocks[1:] {
+		block = strings.SplitN(block, "\n    - ", 2)[0]
+		if strings.Contains(block, "${{ inputs.") {
+			t.Errorf("secret-capable input is interpolated into a run block:\n%s", block)
+		}
+	}
+	for _, line := range strings.Split(yaml, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "run:") && strings.Contains(line, "${{ inputs.") {
+			t.Errorf("secret-capable input is interpolated into an inline run: %s", line)
+		}
+	}
+}
+
+func TestAppleSigningActionPinsCertificateImporter(t *testing.T) {
+	yaml := appleSigningAction(t)
+	want := "uses: Apple-Actions/import-codesign-certs@5142e029c445c10ffc7149d172e540235a065466"
+	if !strings.Contains(yaml, want) {
+		t.Errorf("Apple certificate importer is not pinned to %q", want)
 	}
 }

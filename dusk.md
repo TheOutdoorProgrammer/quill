@@ -24,9 +24,13 @@ Cross-runner releases use `quill/stage@v1` to move a caller-built artifact into 
 The staged workflow can mint a short-lived GCP Artifact Registry token from optional `gcp-workload-identity-provider` and `gcp-service-account` inputs.
 Both inputs are required together, explicit Docker credentials retain priority, and callers that omit them keep the existing GHCR actor/token defaults.
 
+Ephemeral macOS jobs can opt into `quill/apple-signing` by immutable commit SHA.
+The sibling action imports a persistent Apple Distribution identity and reconciles certificate-and-device-bound Ad Hoc provisioning profiles, but leaves Xcode archive, export, entitlement, and publication policy in the caller.
+
 Optional `tap-app-id` and `tap-private-key` inputs mint a scoped, hour-long token and export `HOMEBREW_TAP_GITHUB_TOKEN`, which is the boilerplate every repository publishing a cask to `repository:stout/homebrew-tap` used to carry itself.
 
-The logic is Go in `cmd/quill` and `internal/`, cross-compiled and **committed** to `dist/` for linux and darwin on amd64 and arm64 (adr/0001).
+The release logic is Go in `cmd/quill` and `internal/`, cross-compiled and **committed** to `dist/` for linux and darwin on amd64 and arm64 (adr/0001).
+The Apple signing action uses separate macOS-only binaries in `apple-signing/dist/`, keeping Apple API dependencies out of the primary action binary.
 Nothing is downloaded and no toolchain is installed at run time.
 `scripts/run.sh` picks the binary from `uname`.
 
@@ -65,3 +69,8 @@ Tracking Fledge's major is deliberate, so its changes reach quill's users withou
 A caller job that invokes a reusable workflow cannot also run an authentication step.
 Minting the token in a separate job would relay credential material across the job boundary and start its lifetime before the publisher job begins.
 Pass the workload identity provider and service account as normal workflow inputs, grant the called job `id-token: write`, and let Quill mint the access token where Docker consumes it.
+
+**The Apple signing action is optional and immutable-pinned.**
+It receives a PKCS#12 and an App Store Connect private key, so callers pin `quill/apple-signing` to a full commit SHA rather than trusting the moving release alias.
+The action must never print certificate subjects, team identifiers, private-key material, or provisioning-profile content.
+ADR 0008 keeps archive and export policy in the caller, so adding the helper does not turn `quill/stage` into an iOS build system.

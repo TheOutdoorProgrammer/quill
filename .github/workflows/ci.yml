@@ -49,11 +49,13 @@ jobs:
 
       - uses: golangci/golangci-lint-action@v9
         with:
-          version: latest
+          # Release binaries still use Go 1.26 and reject a Go 1.27 module.
+          install-mode: goinstall
+          version: v2.13.1
 
-      # run.sh chooses which binary gates every release, so a shell bug here is
-      # a supply chain problem rather than an inconvenience.
-      - run: shellcheck scripts/run.sh
+      # These scripts handle committed binaries and signing credentials, so a
+      # shell bug is a supply chain problem rather than an inconvenience.
+      - run: shellcheck scripts/run.sh apple-signing/run.sh
 
   # The committed binaries are the thing callers actually execute, so the only
   # real risk is that they stop matching the source beside them.
