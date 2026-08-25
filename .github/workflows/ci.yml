@@ -51,7 +51,7 @@ jobs:
         with:
           # Release binaries still use Go 1.26 and reject a Go 1.27 module.
           install-mode: goinstall
-          version: v2.12.2
+          version: v2.13.1
 
       # These scripts handle committed binaries and signing credentials, so a
       # shell bug is a supply chain problem rather than an inconvenience.
