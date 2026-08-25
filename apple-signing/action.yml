@@ -1,0 +1,74 @@
+name: Persistent Apple signing
+description: Import an Apple Distribution identity and reconcile iOS Ad Hoc provisioning profiles
+
+inputs:
+  p12-file-base64:
+    description: Base64-encoded PKCS#12 containing the Apple Distribution certificate and private key
+    required: true
+  p12-password:
+    description: Password protecting the PKCS#12 bundle
+    required: true
+  issuer-id:
+    description: App Store Connect API issuer ID
+    required: true
+  api-key-id:
+    description: App Store Connect API key ID
+    required: true
+  api-private-key:
+    description: App Store Connect API private key in PKCS#8 PEM format
+    required: true
+  bundle-identifiers:
+    description: Comma, whitespace, or newline-separated iOS bundle identifiers
+    required: true
+
+outputs:
+  keychain:
+    description: Temporary keychain containing the imported signing identity
+    value: ${{ steps.configuration.outputs.keychain }}
+  profiles:
+    description: JSON object mapping bundle identifiers to profile names, UUIDs, paths, and reuse state
+    value: ${{ steps.profiles.outputs.profiles }}
+  profile-name:
+    description: Provisioning profile name when exactly one bundle identifier was requested
+    value: ${{ steps.profiles.outputs.profile-name }}
+  profile-uuid:
+    description: Provisioning profile UUID when exactly one bundle identifier was requested
+    value: ${{ steps.profiles.outputs.profile-uuid }}
+
+runs:
+  using: composite
+  steps:
+    - name: Configure temporary keychain
+      id: configuration
+      shell: bash
+      env:
+        RUN_ATTEMPT: ${{ github.run_attempt }}
+        RUN_ID: ${{ github.run_id }}
+        RUNNER_TEMP: ${{ runner.temp }}
+      run: |
+        set -euo pipefail
+        keychain_name="$RUNNER_TEMP/quill-signing-$RUN_ID-$RUN_ATTEMPT"
+        {
+          echo "keychain-name=$keychain_name"
+          echo "keychain=$keychain_name.keychain"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Import Apple Distribution identity
+      uses: Apple-Actions/import-codesign-certs@5142e029c445c10ffc7149d172e540235a065466 # v7.0.0
+      with:
+        keychain: ${{ steps.configuration.outputs.keychain-name }}
+        p12-file-base64: ${{ inputs.p12-file-base64 }}
+        p12-password: ${{ inputs.p12-password }}
+
+    - name: Reconcile Ad Hoc provisioning profiles
+      id: profiles
+      shell: bash
+      env:
+        ASC_ISSUER_ID: ${{ inputs.issuer-id }}
+        ASC_KEY_ID: ${{ inputs.api-key-id }}
+        ASC_PRIVATE_KEY: ${{ inputs.api-private-key }}
+        BUNDLE_IDENTIFIERS: ${{ inputs.bundle-identifiers }}
+        P12_FILE_BASE64: ${{ inputs.p12-file-base64 }}
+        P12_PASSWORD: ${{ inputs.p12-password }}
+        SIGNING_KEYCHAIN: ${{ steps.configuration.outputs.keychain }}
+      run: ${{ github.action_path }}/run.sh

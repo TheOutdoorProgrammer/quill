@@ -196,6 +196,46 @@ Use the staged workflow whenever selected publishers cannot all run on the platf
 For an ordinary single-runner release, keep using `TheOutdoorProgrammer/quill@v1` directly.
 [`adr/0006`](adr/0006-stage-platform-specific-builds.md) records why the two interfaces share the same publisher implementation rather than becoming two release systems.
 
+### Persistent Apple signing
+
+`quill/apple-signing` is an optional third action for iOS jobs on ephemeral macOS runners.
+It imports one persistent Apple Distribution identity, creates or reuses Ad Hoc provisioning profiles bound to that certificate and the current enabled-device set, and installs the profiles for Xcode.
+It never runs `xcodebuild`, archives an application, exports an IPA, or publishes anything.
+
+Pin this action to a full commit SHA because it receives signing and App Store Connect credentials:
+
+```yaml
+- id: signing
+  uses: TheOutdoorProgrammer/quill/apple-signing@<full-commit-sha>
+  with:
+    p12-file-base64: ${{ secrets.APPSTORE_CERTIFICATES_FILE_BASE64 }}
+    p12-password: ${{ secrets.APPSTORE_CERTIFICATES_PASSWORD }}
+    issuer-id: ${{ secrets.ASC_ISSUER_ID }}
+    api-key-id: ${{ secrets.ASC_KEY_ID }}
+    api-private-key: ${{ secrets.ASC_KEY_P8 }}
+    bundle-identifiers: com.example.MyApp
+
+- name: Archive
+  env:
+    PROFILE_NAME: ${{ steps.signing.outputs.profile-name }}
+    SIGNING_KEYCHAIN: ${{ steps.signing.outputs.keychain }}
+  run: |
+    xcodebuild archive \
+      CODE_SIGN_STYLE=Manual \
+      CODE_SIGN_IDENTITY="Apple Distribution" \
+      PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" \
+      OTHER_CODE_SIGN_FLAGS="--keychain $SIGNING_KEYCHAIN"
+```
+
+Pass multiple bundle identifiers separated by commas, whitespace, or newlines.
+The `profiles` output is a JSON object keyed by bundle identifier; `profile-name` and `profile-uuid` are also populated when exactly one identifier was requested.
+
+The PKCS#12 must contain the same certificate that App Store Connect exposes to the API key.
+At least one enabled iOS device must exist because an Ad Hoc profile without devices is unusable.
+The action verifies that the imported certificate has a usable private key without printing the certificate subject or team identifier.
+
+[`adr/0008`](adr/0008-share-persistent-apple-signing-setup.md) records why this is a sibling action rather than copied application code or hidden behavior inside `quill/stage`.
+
 ## Publishers
 
 `publish` is a set, not a choice.
@@ -467,10 +507,11 @@ A tag left behind burns that version number: the next attempt computes the one a
 
 ## How it is built
 
-The thinking is a Go binary, committed to `dist/` for `linux` and `darwin` on `amd64` and `arm64`.
+The primary release logic is a Go binary committed to `dist/` for `linux` and `darwin` on `amd64` and `arm64`.
+The Apple signing helper has separate macOS-only binaries under `apple-signing/dist/`, so its Apple API dependencies do not inflate the platform-neutral release action.
 Nothing is downloaded and no toolchain is installed, so the action runs identically on a Linux release runner and a macOS iOS runner.
 
-A committed binary that no longer matches the source beside it is a silent lie, so CI rebuilds `dist/` and diffs it on every change.
+A committed binary that no longer matches the source beside it is a silent lie, so CI rebuilds both binary sets and diffs them on every change.
 That only works if builds are reproducible, which is why `make dist` pins the Go toolchain exactly, strips VCS stamping, and passes `-trimpath`.
 
 ```console
