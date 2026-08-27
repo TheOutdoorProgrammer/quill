@@ -3,6 +3,9 @@
 package actionspec
 
 import (
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"os"
 	"strings"
@@ -12,9 +15,11 @@ import (
 )
 
 const (
-	actionPath         = "../../action.yml"
-	appleSigningPath   = "../../apple-signing/action.yml"
-	stagedWorkflowPath = "../../.github/workflows/staged-release.yml"
+	actionPath             = "../../action.yml"
+	appleSigningPath       = "../../apple-signing/action.yml"
+	appleSigningScriptPath = "../../apple-signing/run.sh"
+	appleWWDRG3Path        = "../../apple-signing/AppleWWDRCAG3.pem"
+	stagedWorkflowPath     = "../../.github/workflows/staged-release.yml"
 )
 
 func action(t *testing.T) string {
@@ -43,6 +48,16 @@ func appleSigningAction(t *testing.T) string {
 	raw, err := os.ReadFile(appleSigningPath)
 	if err != nil {
 		t.Fatalf("reading the Apple signing action: %v", err)
+	}
+	return string(raw)
+}
+
+func appleSigningScript(t *testing.T) string {
+	t.Helper()
+
+	raw, err := os.ReadFile(appleSigningScriptPath)
+	if err != nil {
+		t.Fatalf("reading the Apple signing script: %v", err)
 	}
 	return string(raw)
 }
@@ -178,5 +193,75 @@ func TestAppleSigningActionPinsCertificateImporter(t *testing.T) {
 	want := "uses: Apple-Actions/import-codesign-certs@5142e029c445c10ffc7149d172e540235a065466"
 	if !strings.Contains(yaml, want) {
 		t.Errorf("Apple certificate importer is not pinned to %q", want)
+	}
+}
+
+func TestAppleSigningActionUsesTheRunnerAccountHomeForKeychainAccess(t *testing.T) {
+	yaml := appleSigningAction(t)
+
+	for _, want := range []string{
+		`runner_home="$(/usr/bin/dscl . -read "/Users/$(/usr/bin/id -un)" NFSHomeDirectory`,
+		`echo "home=$runner_home"`,
+		"HOME: ${{ steps.configuration.outputs.home }}",
+	} {
+		if !strings.Contains(yaml, want) {
+			t.Errorf("Apple signing action is missing %q", want)
+		}
+	}
+
+	if got := strings.Count(yaml, "HOME: ${{ steps.configuration.outputs.home }}"); got != 2 {
+		t.Errorf("Apple signing action configures HOME for %d Keychain steps, want 2", got)
+	}
+}
+
+func TestAppleSigningActionExposesTheTemporaryKeychainPassword(t *testing.T) {
+	yaml := appleSigningAction(t)
+	for _, want := range []string{
+		"id: certificates",
+		"value: ${{ steps.certificates.outputs.keychain-password }}",
+		"SIGNING_KEYCHAIN_PASSWORD: ${{ steps.certificates.outputs.keychain-password }}",
+	} {
+		if !strings.Contains(yaml, want) {
+			t.Errorf("Apple signing action is missing %q", want)
+		}
+	}
+
+	script := appleSigningScript(t)
+	if want := `security unlock-keychain -p "$SIGNING_KEYCHAIN_PASSWORD" "$SIGNING_KEYCHAIN"`; !strings.Contains(script, want) {
+		t.Errorf("Apple signing script is missing %q", want)
+	}
+}
+
+func TestAppleSigningActionPinsTheWWDRG3Intermediate(t *testing.T) {
+	raw, err := os.ReadFile(appleWWDRG3Path)
+	if err != nil {
+		t.Fatalf("reading the Apple WWDR G3 intermediate: %v", err)
+	}
+	block, rest := pem.Decode(raw)
+	if block == nil || block.Type != "CERTIFICATE" || len(rest) != 0 {
+		t.Fatal("Apple WWDR G3 intermediate is not one PEM certificate")
+	}
+	certificate, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatalf("parsing the Apple WWDR G3 intermediate: %v", err)
+	}
+	wantFingerprint := "DCF21878C77F4198E4B4614F03D696D89C66C66008D4244E1B99161AAC91601F"
+	if got := fmt.Sprintf("%X", sha256.Sum256(certificate.Raw)); got != wantFingerprint {
+		t.Errorf("Apple WWDR G3 fingerprint is %s, want %s", got, wantFingerprint)
+	}
+
+	script := appleSigningScript(t)
+
+	for _, want := range []string{
+		`security import "$here/AppleWWDRCAG3.pem"`,
+		`-k "$SIGNING_KEYCHAIN"`,
+		"-f pemseq",
+		wantFingerprint,
+		"security verify-cert",
+		"-p codeSign",
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("Apple signing script is missing %q", want)
+		}
 	}
 }

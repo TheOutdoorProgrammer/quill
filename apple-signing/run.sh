@@ -4,6 +4,7 @@ set -euo pipefail
 umask 077
 signing_dir="$(mktemp -d "$RUNNER_TEMP/quill-apple-signing.XXXXXX")"
 trap 'rm -rf "$signing_dir"' EXIT
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 printf '%s' "$P12_FILE_BASE64" \
   | tr -d '\r\n' \
@@ -14,6 +15,20 @@ openssl pkcs12 -legacy \
   -nokeys \
   -passin env:P12_PASSWORD \
   -out "$signing_dir/distribution.pem"
+security unlock-keychain -p "$SIGNING_KEYCHAIN_PASSWORD" "$SIGNING_KEYCHAIN"
+security import "$here/AppleWWDRCAG3.pem" \
+  -k "$SIGNING_KEYCHAIN" \
+  -f pemseq \
+  -t cert >/dev/null 2>&1 || true
+security find-certificate -a -Z "$SIGNING_KEYCHAIN" \
+  | grep -Fq DCF21878C77F4198E4B4614F03D696D89C66C66008D4244E1B99161AAC91601F \
+  || { echo "::error::the Apple WWDR G3 intermediate was not imported"; exit 1; }
+security verify-cert \
+  -c "$signing_dir/distribution.pem" \
+  -p codeSign \
+  -k "$SIGNING_KEYCHAIN" \
+  -q \
+  || { echo "::error::the imported certificate chain is not trusted"; exit 1; }
 printf '%s' "$ASC_PRIVATE_KEY" > "$signing_dir/AuthKey_$ASC_KEY_ID.p8"
 
 fingerprint="$(openssl x509 \
@@ -30,7 +45,6 @@ security find-identity \
 grep -q "$fingerprint" "$signing_dir/identities" \
   || { echo "::error::the imported certificate has no usable private key"; exit 1; }
 
-here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 case "$(uname -m)" in
   x86_64 | amd64) arch=amd64 ;;
   arm64 | aarch64) arch=arm64 ;;
