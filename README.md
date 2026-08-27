@@ -219,20 +219,27 @@ Pin this action to a full commit SHA because it receives signing and App Store C
   env:
     PROFILE_NAME: ${{ steps.signing.outputs.profile-name }}
     SIGNING_KEYCHAIN: ${{ steps.signing.outputs.keychain }}
+    SIGNING_KEYCHAIN_PASSWORD: ${{ steps.signing.outputs.keychain-password }}
   run: |
+    security unlock-keychain -p "$SIGNING_KEYCHAIN_PASSWORD" "$SIGNING_KEYCHAIN"
+    security default-keychain -d user -s "$SIGNING_KEYCHAIN"
     xcodebuild archive \
       CODE_SIGN_STYLE=Manual \
       CODE_SIGN_IDENTITY="Apple Distribution" \
-      PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" \
-      OTHER_CODE_SIGN_FLAGS="--keychain $SIGNING_KEYCHAIN"
+      PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME"
 ```
 
 Pass multiple bundle identifiers separated by commas, whitespace, or newlines.
 The `profiles` output is a JSON object keyed by bundle identifier; `profile-name` and `profile-uuid` are also populated when exactly one identifier was requested.
 
-The PKCS#12 must contain the same certificate that App Store Connect exposes to the API key.
+The PKCS#12 must contain the same certificate that App Store Connect exposes to the API key and its private key.
+The action carries Apple's WWDR G3 intermediate at its published fingerprint and imports it into the temporary keychain before validating the certificate chain.
 At least one enabled iOS device must exist because an Ad Hoc profile without devices is unusable.
 The action verifies that the imported certificate has a usable private key without printing the certificate subject or team identifier.
+It resolves the current macOS account's home directory before using Keychain because launch daemon runners can inherit another account's `HOME`, which makes a correctly paired identity appear invalid.
+Unlock the temporary keychain immediately before `xcodebuild` when it runs in a later workflow step.
+Launch daemon runners do not reliably carry the composite action's unlocked Keychain state across that boundary.
+Set it as the user-domain default in the same step because `security cms` needs a default keychain while decoding an embedded provisioning profile.
 
 [`adr/0008`](adr/0008-share-persistent-apple-signing-setup.md) records why this is a sibling action rather than copied application code or hidden behavior inside `quill/stage`.
 

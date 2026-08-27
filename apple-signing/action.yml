@@ -25,6 +25,9 @@ outputs:
   keychain:
     description: Temporary keychain containing the imported signing identity
     value: ${{ steps.configuration.outputs.keychain }}
+  keychain-password:
+    description: Masked password for unlocking the temporary keychain in later steps
+    value: ${{ steps.certificates.outputs.keychain-password }}
   profiles:
     description: JSON object mapping bundle identifiers to profile names, UUIDs, paths, and reuse state
     value: ${{ steps.profiles.outputs.profiles }}
@@ -47,14 +50,20 @@ runs:
         RUNNER_TEMP: ${{ runner.temp }}
       run: |
         set -euo pipefail
+        runner_home="$(/usr/bin/dscl . -read "/Users/$(/usr/bin/id -un)" NFSHomeDirectory | /usr/bin/cut -d ' ' -f 2-)"
+        test -d "$runner_home"
         keychain_name="$RUNNER_TEMP/quill-signing-$RUN_ID-$RUN_ATTEMPT"
         {
+          echo "home=$runner_home"
           echo "keychain-name=$keychain_name"
           echo "keychain=$keychain_name.keychain"
         } >> "$GITHUB_OUTPUT"
 
     - name: Import Apple Distribution identity
+      id: certificates
       uses: Apple-Actions/import-codesign-certs@5142e029c445c10ffc7149d172e540235a065466 # v7.0.0
+      env:
+        HOME: ${{ steps.configuration.outputs.home }}
       with:
         keychain: ${{ steps.configuration.outputs.keychain-name }}
         p12-file-base64: ${{ inputs.p12-file-base64 }}
@@ -64,6 +73,7 @@ runs:
       id: profiles
       shell: bash
       env:
+        HOME: ${{ steps.configuration.outputs.home }}
         ASC_ISSUER_ID: ${{ inputs.issuer-id }}
         ASC_KEY_ID: ${{ inputs.api-key-id }}
         ASC_PRIVATE_KEY: ${{ inputs.api-private-key }}
@@ -71,4 +81,5 @@ runs:
         P12_FILE_BASE64: ${{ inputs.p12-file-base64 }}
         P12_PASSWORD: ${{ inputs.p12-password }}
         SIGNING_KEYCHAIN: ${{ steps.configuration.outputs.keychain }}
+        SIGNING_KEYCHAIN_PASSWORD: ${{ steps.certificates.outputs.keychain-password }}
       run: ${{ github.action_path }}/run.sh
