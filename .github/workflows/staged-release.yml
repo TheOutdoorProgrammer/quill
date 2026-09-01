@@ -211,13 +211,13 @@ jobs:
       page-url: ${{ steps.quill.outputs.page-url }}
       install-url: ${{ steps.quill.outputs.install-url }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           # Quill derives the next version from the complete tag history.
           fetch-depth: 0
 
       - name: Download staged release assets
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: ${{ inputs.artifact-name }}
           path: ${{ runner.temp }}/quill-staged
