@@ -143,6 +143,10 @@ on:
         description: Homebrew tap repository reachable by the GitHub App.
         type: string
         default: homebrew-tap
+      tap-owner:
+        description: GitHub owner of the Homebrew tap repository.
+        type: string
+        default: ""
     secrets:
       publisher-env:
         description: KEY=value lines exported before publishing.
@@ -282,3 +286,4 @@ jobs:
           tap-app-id: ${{ secrets.tap-app-id }}
           tap-private-key: ${{ secrets.tap-private-key }}
           tap-repository: ${{ inputs.tap-repository }}
+          tap-owner: ${{ inputs.tap-owner }}

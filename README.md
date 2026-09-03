@@ -297,7 +297,7 @@ Give quill a GitHub App and it mints a token scoped to that one repository, good
 ```
 
 That exports `HOMEBREW_TAP_GITHUB_TOKEN`, which is the variable a `homebrew_casks` block already expects.
-Set `tap-repository` if your tap is not called `homebrew-tap`.
+Set `tap-owner` when the tap lives under a different GitHub owner than the calling repository, and set `tap-repository` if your tap is not called `homebrew-tap`.
 
 ### Docker
 
