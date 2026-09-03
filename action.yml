@@ -212,6 +212,10 @@ inputs:
     description: The tap repository the minted token may reach.
     required: false
     default: homebrew-tap
+  tap-owner:
+    description: The GitHub owner of the tap repository.
+    required: false
+    default: ""
 
 outputs:
   version:
@@ -291,7 +295,7 @@ runs:
       with:
         app-id: ${{ inputs.tap-app-id }}
         private-key: ${{ inputs.tap-private-key }}
-        owner: ${{ github.repository_owner }}
+        owner: ${{ inputs.tap-owner || github.repository_owner }}
         repositories: ${{ inputs.tap-repository }}
 
     - name: Export publisher credentials
