@@ -467,6 +467,7 @@ A tag left behind burns that version number: the next attempt computes the one a
 | `publish` | `none` | Any of `goreleaser`, `fledge` and `docker`, comma or newline separated, or `none`. Order is fixed |
 | `dry-run` | `false` | Do everything side-effect free and stop before tagging |
 | `release-branch` | `refs/heads/main` | The only ref a release may come from. Empty allows any |
+| `source-sha` | | Full lowercase checkout commit required before publishing. Docker revision and `COMMIT` use this verified source |
 | `major-alias` | `true` | Move the `vN` tag. Never moves for a candidate |
 | `working-directory` | `.` | The checkout to release from |
 | `env` | | `KEY=value` lines exported before publishing |
@@ -482,7 +483,7 @@ A tag left behind burns that version number: the next attempt computes the one a
 | `docker-context` | `.` | |
 | `docker-file` | | Empty means the default for the context |
 | `docker-platforms` | `linux/amd64,linux/arm64` | |
-| `docker-build-args` | | Extra args. `VERSION` and `COMMIT` are always passed first |
+| `docker-build-args` | | Extra args. `VERSION` and `COMMIT` are passed first; an explicit `source-sha` takes precedence over a custom `COMMIT` |
 | `docker-tags` | | `metadata-action` spec. Empty means semver plus a guarded `latest` and `production` |
 | `docker-cache` | `true` | Use the Actions build cache |
 | `docker-dry-run` | `true` | Build without pushing before tagging |

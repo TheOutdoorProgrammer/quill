@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/TheOutdoorProgrammer/quill/internal/actions"
@@ -33,6 +34,7 @@ func runPlan(args []string) error {
 	scope := fs.String("scope", "Release", `"Release" or "Release Candidate"`)
 	ref := fs.String("ref", "", "the ref this run is on, normally github.ref")
 	requireRef := fs.String("require-ref", "", "fail unless -ref matches this")
+	sourceSHA := fs.String("source-sha", "", "require this exact checkout commit before publishing")
 	publish := fs.String("publish", "none",
 		"publishers to run, in order: goreleaser, docker, fledge, or none")
 	fledgeArtifact := fs.String("fledge-artifact", "",
@@ -75,6 +77,15 @@ func runPlan(args []string) error {
 	}
 
 	repo := gitrepo.New(*dir, *remote)
+	if *sourceSHA != "" {
+		head, err := repo.HeadSHA()
+		if err != nil {
+			return err
+		}
+		if !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(*sourceSHA) || head != *sourceSHA {
+			return fmt.Errorf("source-sha must be a full commit SHA matching the checkout HEAD")
+		}
+	}
 
 	// A shallow checkout has no tags, so the next version would restart at
 	// v0.1.0 and quietly clobber the real line. Callers forget fetch-depth: 0.
