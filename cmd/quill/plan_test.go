@@ -2,9 +2,42 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestPlanPinsCheckoutBeforePublishing(t *testing.T) {
+	dir := t.TempDir()
+	git := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git: %v: %s", err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git("init")
+	git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", "initial")
+	head := git("rev-parse", "HEAD")
+	t.Setenv("GITHUB_OUTPUT", filepath.Join(t.TempDir(), "outputs"))
+	t.Setenv("GITHUB_STEP_SUMMARY", filepath.Join(t.TempDir(), "summary"))
+	for _, source := range []string{"main", head[:12], strings.Repeat("0", 40), strings.ToUpper(head)} {
+		if err := runPlan([]string{"-dir", dir, "-source-sha", source}); err == nil {
+			t.Fatalf("accepted source %q", source)
+		}
+	}
+	for _, source := range []string{"", head} {
+		if err := runPlan([]string{"-dir", dir, "-source-sha", source}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if tags := git("tag", "--list"); tags != "" {
+		t.Fatalf("planning created tags: %s", tags)
+	}
+}
 
 func TestParseScope(t *testing.T) {
 	candidates := []string{"Release Candidate", "release candidate", "rc", "CANDIDATE"}

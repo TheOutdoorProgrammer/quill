@@ -175,6 +175,8 @@ It does not own Xcode, signing, provisioning, or any other repository-specific b
 The reusable workflow downloads that artifact onto an Ubuntu runner and then invokes the same Quill composite action documented everywhere else on this page.
 
 The GCP inputs are optional and must be supplied together.
+
+The staged workflow also accepts `source-sha`, an optional full lowercase commit SHA. It checks out that commit and verifies HEAD before any publisher runs. This lets a trusted workflow dispatched on `main` build an earlier merged commit while retaining its existing workload identity. The caller must check that the requested source belongs to its release branch and build staged artifacts from that same commit. Docker's revision label and `COMMIT` build argument use the verified source. Leaving the input empty preserves the existing checkout behavior.
 When they are present, Quill uses GitHub OIDC to impersonate the service account and passes its short-lived access token to Docker with the Artifact Registry OAuth username.
 The called job needs `id-token: write`, and the service account needs permission to write to the selected registry.
 No service-account key or registry password is stored in GitHub.
@@ -467,6 +469,7 @@ A tag left behind burns that version number: the next attempt computes the one a
 | `publish` | `none` | Any of `goreleaser`, `fledge` and `docker`, comma or newline separated, or `none`. Order is fixed |
 | `dry-run` | `false` | Do everything side-effect free and stop before tagging |
 | `release-branch` | `refs/heads/main` | The only ref a release may come from. Empty allows any |
+| `source-sha` | | Full lowercase checkout commit required before publishing. Docker revision and `COMMIT` use this verified source |
 | `major-alias` | `true` | Move the `vN` tag. Never moves for a candidate |
 | `working-directory` | `.` | The checkout to release from |
 | `env` | | `KEY=value` lines exported before publishing |
@@ -482,7 +485,7 @@ A tag left behind burns that version number: the next attempt computes the one a
 | `docker-context` | `.` | |
 | `docker-file` | | Empty means the default for the context |
 | `docker-platforms` | `linux/amd64,linux/arm64` | |
-| `docker-build-args` | | Extra args. `VERSION` and `COMMIT` are always passed first |
+| `docker-build-args` | | Extra args. `VERSION` and `COMMIT` are passed first; an explicit `source-sha` takes precedence over a custom `COMMIT` |
 | `docker-tags` | | `metadata-action` spec. Empty means semver plus a guarded `latest` and `production` |
 | `docker-cache` | `true` | Use the Actions build cache |
 | `docker-dry-run` | `true` | Build without pushing before tagging |

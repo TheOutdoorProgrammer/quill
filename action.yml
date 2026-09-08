@@ -35,6 +35,10 @@ inputs:
       Set it empty to allow any ref.
     required: false
     default: refs/heads/main
+  source-sha:
+    description: Exact checkout commit required before publishing. Empty preserves the caller's checkout.
+    required: false
+    default: ""
   major-alias:
     description: >-
       Move the vN tag to this release, so callers can pin a major the way
@@ -108,7 +112,7 @@ inputs:
   docker-build-args:
     description: >-
       Extra build arguments, one per line. VERSION and COMMIT are always passed,
-      and anything here comes after them so it can override them.
+      and anything here comes after them. An explicit source-sha pins COMMIT.
     required: false
     default: ""
   docker-tags:
@@ -269,6 +273,7 @@ runs:
         SCOPE: ${{ inputs.scope }}
         PUBLISH: ${{ inputs.publish }}
         REF: ${{ github.ref }}
+        SOURCE_SHA: ${{ inputs.source-sha }}
         # Written this way round because '' is falsy in a GitHub expression, so
         # `cond && '' || x` collapses to x for both outcomes.
         REQUIRE_REF: ${{ inputs.dry-run != 'true' && inputs.release-branch || '' }}
@@ -284,6 +289,7 @@ runs:
           -publish "$PUBLISH" \
           -ref "$REF" \
           -require-ref "$REQUIRE_REF" \
+          -source-sha "$SOURCE_SHA" \
           -fledge-artifact "$FLEDGE_ARTIFACT" \
           -docker-images "$DOCKER_IMAGES" \
           -docker-registry "$DOCKER_REGISTRY" \
@@ -329,6 +335,8 @@ runs:
       with:
         images: ${{ steps.plan.outputs.docker-images }}
         tags: ${{ steps.plan.outputs.docker-tags }}
+        labels: |
+          org.opencontainers.image.revision=${{ inputs.source-sha || github.sha }}
 
     # Before the dry run, because that run catalogs artefacts too and would
     # otherwise fail on the check rather than on the real thing. Whether it is
@@ -363,6 +371,7 @@ runs:
           VERSION=${{ steps.plan.outputs.next }}
           COMMIT=${{ github.sha }}
           ${{ inputs.docker-build-args }}
+          ${{ inputs.source-sha && format('COMMIT={0}', inputs.source-sha) || '' }}
         cache-from: ${{ inputs.docker-cache == 'true' && 'type=gha' || '' }}
         cache-to: ${{ inputs.docker-cache == 'true' && 'type=gha,mode=max' || '' }}
 
@@ -426,6 +435,7 @@ runs:
           VERSION=${{ steps.plan.outputs.next }}
           COMMIT=${{ github.sha }}
           ${{ inputs.docker-build-args }}
+          ${{ inputs.source-sha && format('COMMIT={0}', inputs.source-sha) || '' }}
         cache-from: ${{ inputs.docker-cache == 'true' && 'type=gha' || '' }}
         cache-to: ${{ inputs.docker-cache == 'true' && 'type=gha,mode=max' || '' }}
         sbom: ${{ inputs.docker-sbom }}
