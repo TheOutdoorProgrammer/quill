@@ -31,6 +31,10 @@ on:
         description: Only ref a real release may be cut from.
         type: string
         default: refs/heads/main
+      source-sha:
+        description: Exact source checkout commit, independently of the workflow event ref.
+        type: string
+        default: ""
       major-alias:
         description: Move the vN alias after a successful stable release.
         type: boolean
@@ -219,6 +223,7 @@ jobs:
         with:
           # Quill derives the next version from the complete tag history.
           fetch-depth: 0
+          ref: ${{ inputs.source-sha || github.sha }}
 
       - name: Download staged release assets
         uses: actions/download-artifact@v5
@@ -245,13 +250,14 @@ jobs:
       # Keep the publisher implementation in the composite action. This
       # workflow only owns the job boundary and artifact handoff.
       - id: quill
-        uses: TheOutdoorProgrammer/quill@v1
+        uses: TheOutdoorProgrammer/quill@7dad57727ccd38b93a7b88413e44db31085c06dd
         with:
           bump: ${{ inputs.bump }}
           scope: ${{ inputs.scope }}
           publish: ${{ inputs.publish }}
           dry-run: ${{ inputs.dry-run }}
           release-branch: ${{ inputs.release-branch }}
+          source-sha: ${{ inputs.source-sha }}
           major-alias: ${{ inputs.major-alias }}
           working-directory: ${{ inputs.working-directory }}
           env: ${{ secrets.publisher-env }}

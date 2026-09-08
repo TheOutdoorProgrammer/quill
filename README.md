@@ -175,6 +175,8 @@ It does not own Xcode, signing, provisioning, or any other repository-specific b
 The reusable workflow downloads that artifact onto an Ubuntu runner and then invokes the same Quill composite action documented everywhere else on this page.
 
 The GCP inputs are optional and must be supplied together.
+
+The staged workflow also accepts `source-sha`, an optional full lowercase commit SHA. It checks out that commit and verifies HEAD before any publisher runs. This lets a trusted workflow dispatched on `main` build an earlier merged commit while retaining its existing workload identity. The caller must check that the requested source belongs to its release branch and build staged artifacts from that same commit. Docker's revision label and `COMMIT` build argument use the verified source. Leaving the input empty preserves the existing checkout behavior.
 When they are present, Quill uses GitHub OIDC to impersonate the service account and passes its short-lived access token to Docker with the Artifact Registry OAuth username.
 The called job needs `id-token: write`, and the service account needs permission to write to the selected registry.
 No service-account key or registry password is stored in GitHub.
